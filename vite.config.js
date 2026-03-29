@@ -6,26 +6,37 @@ import { defineConfig } from 'vite';
 const projectDir = path.dirname(fileURLToPath(import.meta.url));
 const obsidianAsarPath = path.resolve(projectDir, 'asar/obsidian.asar');
 
-const STARTER_DIALOG_SNIPPET =
-  'function a(a,e){var t=l.dialog.showOpenDialogSync({title:a,properties:["openDirectory","createDirectory","dontAddToRecent"],defaultPath:e});return t&&t.length>0?t[0]:null}';
-const STARTER_DIALOG_PATCH =
-  'function a(a,e){return window.__OBSIDIAN_WEB_SHIM__.showOpenDialogSyncCompat({title:a,properties:["openDirectory","createDirectory","dontAddToRecent"],defaultPath:e})}';
-const STARTER_OPEN_FOLDER_SNIPPET =
-  'addSetting((function(e){return e.setName(M.optionOpenFolderAsVault()).setDesc(M.optionOpenFolderAsVaultDescription()).addButton((function(e){return e.setButtonText(M.buttonOpen()).onClick((function(){var e=a(M.optionOpenFolderAsVault());if(e){var t=h.sendSync("vault-open",e,!1);!0===t?window.close():new pt("".concat(M.msgErrorFailedToOpenVault()," ").concat(t,"."))}}))}))}))';
-const STARTER_OPEN_FOLDER_PATCH =
-  'addSetting((function(e){return e.setName(M.optionOpenFolderAsVault()).setDesc(M.optionOpenFolderAsVaultDescription()).addButton((function(e){return e.setButtonText(M.buttonOpen()).onClick((function(){window.__OBSIDIAN_WEB_SHIM__.openFolderAsVault(h,M,pt)}))}))}))';
-const STARTER_CREATE_VAULT_SNIPPET =
-  'a.createEl("button",{cls:"mod-cta",text:M.buttonCreateVault()},(function(a){a.addEventListener("click",(function(){var a=w.getValue().trim();if(a)if(na.isWin&&a.endsWith("."))new pt(M.msgTrailingDotVaultName());else if(A){var e=A+"/"+a;try{var t=h.sendSync("vault-open",e,!0);if(!0===t)return C?(h.sendSync("vault-message",e,{action:"sync-setup",vault:JSON.stringify(C)}),X(y,H,"left")):h.sendSync("vault-message",e,{action:"vault-setup"}),void window.close();new pt("".concat(M.msgFailedToCreateVault()," ").concat(t,"."))}catch(a){console.error(a),new pt(M.msgFailedToCreateVaultAtLocation())}}else new pt(M.msgInvalidFolder());else new pt(M.msgEmptyVaultName())}))}))}))';
-const STARTER_CREATE_VAULT_PATCH =
-  'a.createEl("button",{cls:"mod-cta",text:M.buttonCreateVault()},(function(a){a.addEventListener("click",(function(){var a=w.getValue().trim();if(a)if(na.isWin&&a.endsWith("."))new pt(M.msgTrailingDotVaultName());else window.__OBSIDIAN_WEB_SHIM__.createLocalVault(h,M,pt,a,C);else new pt(M.msgEmptyVaultName())}))}))}))';
-const STARTER_CREATE_BROWSE_SNIPPET =
-  'addSetting((function(e){z=e.setName(M.optionNewVaultLocation()).setDesc(M.optionNewVaultLocationDescription()).addButton((function(e){return e.setButtonText(M.buttonBrowse()).onClick((function(){var e=a(M.optionNewVaultLocation());e&&S(e)}))}))}))';
-const STARTER_CREATE_BROWSE_PATCH =
-  'addSetting((function(e){z=e.setName(M.optionNewVaultLocation()).setDesc(M.optionNewVaultLocationDescription()).addButton((function(e){return e.setButtonText(M.buttonBrowse()).onClick((function(){window.__OBSIDIAN_WEB_SHIM__.chooseCreateVaultParent(M.optionNewVaultLocation(),S)}))}))}))';
-const STARTER_CREATE_VAULT_PREVIEW_SNIPPET =
-  'else if(A){var e=A+"/"+a;try{var t=h.sendSync("vault-open",e,!0);if(!0===t)return C?(h.sendSync("vault-message",e,{action:"sync-setup",vault:JSON.stringify(C)}),X(y,H,"left")):h.sendSync("vault-message",e,{action:"vault-setup"}),void window.close();new pt("".concat(M.msgFailedToCreateVault()," ").concat(t,"."))}catch(a){console.error(a),new pt(M.msgFailedToCreateVaultAtLocation())}}else new pt(M.msgInvalidFolder())';
-const STARTER_CREATE_VAULT_PREVIEW_PATCH =
-  'else if(A){var e=A+"/"+a;try{var t=h.sendSync("vault-open",e,!0);if(!0===t)return C?(h.sendSync("vault-message",e,{action:"sync-setup",vault:JSON.stringify(C)}),X(y,H,"left")):h.sendSync("vault-message",e,{action:"vault-setup"}),void window.close();new pt("".concat(M.msgFailedToCreateVault()," ").concat(t,"."))}catch(a){console.error(a),new pt(M.msgFailedToCreateVaultAtLocation())}}else new pt(M.msgInvalidFolder())';
+const PLAINTEXT_PATCHES = [
+  {
+    name: 'starter dialog compat',
+    target: /^starter\.js$/,
+    find: /function ([A-Za-z_$][A-Za-z0-9_$]*)\(([A-Za-z_$][A-Za-z0-9_$]*),([A-Za-z_$][A-Za-z0-9_$]*)\){var ([A-Za-z_$][A-Za-z0-9_$]*)=([A-Za-z_$][A-Za-z0-9_$]*)\.dialog\.showOpenDialogSync\({title:\2,properties:\["openDirectory","createDirectory","dontAddToRecent"\],defaultPath:\3}\);return \4&&\4\.length>0\?\4\[0\]:null}/,
+    replace: (_substring, fn, a1, a2, _v1, _v2) => {
+      return `function ${fn}(${a1},${a2}){return window.__OBSIDIAN_WEB_SHIM__.showOpenDialogSyncCompat({title:${a1},properties:["openDirectory","createDirectory","dontAddToRecent"],defaultPath:${a2}})}`;
+    }
+  },
+  {
+    name: 'starter open folder flow',
+    target: /^starter\.js$/,
+    find: /addSetting\(\(function\(([A-Za-z_$][A-Za-z0-9_$]*)\){return \1\.setName\(([A-Za-z_$][A-Za-z0-9_$]*)\.optionOpenFolderAsVault\(\)\)\.setDesc\(\2\.optionOpenFolderAsVaultDescription\(\)\)\.addButton\(\(function\(([A-Za-z_$][A-Za-z0-9_$]*)\){return \3\.setButtonText\(\2\.buttonOpen\(\)\)\.onClick\(\(function\(\){var ([A-Za-z_$][A-Za-z0-9_$]*)=([A-Za-z_$][A-Za-z0-9_$]*)\(\2\.optionOpenFolderAsVault\(\)\);if\(\4\){var ([A-Za-z_$][A-Za-z0-9_$]*)=([A-Za-z_$][A-Za-z0-9_$]*)\.sendSync\("vault-open",\4,!1\);!0===\6\?window\.close\(\):new ([A-Za-z_$][A-Za-z0-9_$]*)\(""\.concat\(\2\.msgErrorFailedToOpenVault\(\)," "\)\.concat\(\6,"\."\)\)}}\)\)}\)\)}\)\)/,
+    replace: (_substring, e, M, anon1_e, _anon2_a1, _v1, _fn1, h, _v3, pt) =>
+      `addSetting((function(${e}){return ${e}.setName(${M}.optionOpenFolderAsVault()).setDesc(${M}.optionOpenFolderAsVaultDescription()).addButton((function(${anon1_e}){return ${anon1_e}.setButtonText(${M}.buttonOpen()).onClick((function(){window.__OBSIDIAN_WEB_SHIM__.openFolderAsVault(${h},${M},${pt})}))}))}))`,
+  },
+  {
+    name: 'starter create browse flow',
+    target: /^starter\.js$/,
+    find: /addSetting\(\(function\(([A-Za-z_$][A-Za-z0-9_$]*)\){([A-Za-z_$][A-Za-z0-9_$]*)=\1\.setName\(([A-Za-z_$][A-Za-z0-9_$]*)\.optionNewVaultLocation\(\)\)\.setDesc\(\3\.optionNewVaultLocationDescription\(\)\)\.addButton\(\(function\(([A-Za-z_$][A-Za-z0-9_$]*)\){return \4\.setButtonText\(\3\.buttonBrowse\(\)\)\.onClick\(\(function\(\){var ([A-Za-z_$][A-Za-z0-9_$]*)=([A-Za-z_$][A-Za-z0-9_$]*)\(\3\.optionNewVaultLocation\(\)\);\5&&([A-Za-z_$][A-Za-z0-9_$]*)\(\5\)}\)\)}\)\)}\)\)/,
+    replace: (_substring, e, _z, M, anon1_e, _anon2_e, _fn_a, S) =>
+      `addSetting((function(${e}){z=${e}.setName(${M}.optionNewVaultLocation()).setDesc(${M}.optionNewVaultLocationDescription()).addButton((function(${anon1_e}){return ${anon1_e}.setButtonText(${M}.buttonBrowse()).onClick((function(){window.__OBSIDIAN_WEB_SHIM__.chooseCreateVaultParent(${M}.optionNewVaultLocation(),${S})}))}))}))`,
+  },
+  {
+    name: 'starter create vault flow',
+    target: /^starter\.js$/,
+    find: /([A-Za-z_$][A-Za-z0-9_$]*)\.createEl\("button",{cls:"mod-cta",text:([A-Za-z_$][A-Za-z0-9_$]*)\.buttonCreateVault\(\)},\(function\(([A-Za-z_$][A-Za-z0-9_$]*)\){\3\.addEventListener\("click",\(function\(\){var ([A-Za-z_$][A-Za-z0-9_$]*)=([A-Za-z_$][A-Za-z0-9_$]*)\.getValue\(\)\.trim\(\);if\(\4\)if\(([A-Za-z_$][A-Za-z0-9_$]*)\.isWin&&\4\.endsWith\("\."\)\)new ([A-Za-z_$][A-Za-z0-9_$]*)\(\2\.msgTrailingDotVaultName\(\)\);else if\(([A-Za-z_$][A-Za-z0-9_$]*)\){var ([A-Za-z_$][A-Za-z0-9_$]*)=\8\+"\/"\+\4;try{var ([A-Za-z_$][A-Za-z0-9_$]*)=([A-Za-z_$][A-Za-z0-9_$]*)\.sendSync\("vault-open",\9,!0\);if\(!0===\10\)return ([A-Za-z_$][A-Za-z0-9_$]*)\?\(\11\.sendSync\("vault-message",\9,{action:"sync-setup",vault:JSON\.stringify\(\12\)}\),([A-Za-z_$][A-Za-z0-9_$]*)\(([A-Za-z_$][A-Za-z0-9_$]*),([A-Za-z_$][A-Za-z0-9_$]*),"left"\)\):\11\.sendSync\("vault-message",\9,{action:"vault-setup"}\),void window\.close\(\);new \7\(""\.concat\(\2\.msgFailedToCreateVault\(\)," "\)\.concat\(\10,"\."\)\)}catch\(([A-Za-z_$][A-Za-z0-9_$]*)\){console\.error\(\16\),new \7\(\2\.msgFailedToCreateVaultAtLocation\(\)\)}}else new \7\(\2\.msgInvalidFolder\(\)\);else new \7\(\2\.msgEmptyVaultName\(\)\)}\)\)}\)\)}\)\)/,
+    replace: (_substring, a, M, a_1, a_2, w, na, pt, A, e, t, h, C, X, y, H, a_3) =>
+      `${a}.createEl("button",{cls:"mod-cta",text:${M}.buttonCreateVault()},(function(${a_1}){${a_1}.addEventListener("click",(function(){var ${a_2}=${w}.getValue().trim();if(${a_2})if(${na}.isWin&&${a_2}.endsWith("."))new ${pt}(${M}.msgTrailingDotVaultName());else window.__OBSIDIAN_WEB_SHIM__.createLocalVault(${h},${M},${pt},${a_2},${C});else new ${pt}(${M}.msgEmptyVaultName())}))}))}))`,
+  },
+];
 
 const CONTENT_TYPES = {
   '.css': 'text/css; charset=utf-8',
@@ -53,22 +64,31 @@ function normalizeAssetPath(url) {
   return pathname.slice(1);
 }
 
+function applyPlaintextPatches(assetPath, sourceText) {
+  let nextSource = sourceText;
+
+  for (const patch of PLAINTEXT_PATCHES) {
+    const matchesTarget = typeof patch.target === 'string' ? patch.target === assetPath : patch.target.test(assetPath);
+    if (!matchesTarget) continue;
+
+    const updated = nextSource.replace(patch.find, patch.replace);
+    if (updated === nextSource) {
+      throw new Error(`Failed to apply plaintext patch: ${patch.name}`);
+    }
+    nextSource = updated;
+  }
+
+  return nextSource;
+}
+
 function readAsarAsset(assetPath) {
   try {
     const metadata = statFile(obsidianAsarPath, assetPath);
     if (metadata?.files) return null;
     let source = extractFile(obsidianAsarPath, assetPath);
-    if (assetPath === 'starter.js') {
-        source = Buffer.from(
-        source
-          .toString('utf8')
-          .replace(STARTER_DIALOG_SNIPPET, STARTER_DIALOG_PATCH)
-          .replace(STARTER_OPEN_FOLDER_SNIPPET, STARTER_OPEN_FOLDER_PATCH)
-          .replace(STARTER_CREATE_BROWSE_SNIPPET, STARTER_CREATE_BROWSE_PATCH)
-          .replace(STARTER_CREATE_VAULT_SNIPPET, STARTER_CREATE_VAULT_PATCH),
-        'utf8',
-      );
-    }
+    const sourceText = source.toString('utf8');
+    const patchedText = applyPlaintextPatches(assetPath, sourceText);
+    if (patchedText !== sourceText) source = Buffer.from(patchedText, 'utf8');
     return source;
   } catch {
     return null;
