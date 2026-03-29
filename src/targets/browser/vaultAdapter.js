@@ -60,7 +60,7 @@ export function createBrowserVaultAdapter(deps) {
     openDirectoryDialogSync,
     openFolderAsVault,
     createLocalVault,
-    async openVault(vaultPath, create) {
+    openVault(vaultPath, create) {
       const normalized = normalizePath(vaultPath) || getCurrentVault()?.path;
       if (!normalized) return 'folder not found';
       const existing = getVaultRecordByPath(normalized);
