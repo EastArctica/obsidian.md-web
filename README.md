@@ -15,13 +15,13 @@ What it does:
 - Installs browser-side shims for a small subset of Electron and Node APIs.
 - Includes a basic `@electron/remote` shim mapped through `window.require('@electron/remote')`.
 - Applies a minimal in-memory patch to `starter.js` so the folder dialog path is routed through the web shim instead of mutating files on disk.
-- Starts from a slim `src/bootstrap.js` entrypoint that now delegates to `src/targets/browser/index.js`, with shared helpers under `src/core/`.
+- Starts from a slim `src/bootstrap.js` entrypoint that now delegates to `src/targets/browser/index.js` or `src/targets/selfhosted/index.js`, with shared helpers under `src/core/`.
 
 What it does not do yet:
 - Replace the real desktop main process.
 - Provide native filesystem, IPC, or Electron window behavior.
 - Make the full app production-ready in a browser.
-- Implement the planned `selfhosted` target; `VITE_OBSIDIAN_TARGET=selfhosted` currently throws a not-implemented error.
+- The planned `selfhosted` target now has a scaffolded target entry and vault adapter shell, but the server-backed implementation is still not wired up.
 
 Known follow-up:
 - Recent vault metadata is now persisted, and directory handles are restored from IndexedDB when the browser allows it; sync fallback vault paths chosen through `prompt(...)` still do not have a real handle behind them.

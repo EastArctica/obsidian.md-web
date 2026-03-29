@@ -1081,83 +1081,22 @@ function installShims() {
     window.dispatchEvent(new CustomEvent(name, { detail }));
   };
 
-  registerChannel('vault', () => getCurrentVault(), { emitOnSend: true, description: 'Returns the current vault associated with the active web contents.', returns: 'object|null' });
+  registerChannel('vault', () => browserVaultAdapter.getCurrentVault(), { emitOnSend: true, description: 'Returns the current vault associated with the active web contents.', returns: 'object|null' });
   registerChannel('vault-list', () => buildVaultList(), { emitOnSend: true, description: 'Returns the host-maintained vault registry keyed by vault id.', returns: 'object' });
-  registerChannel('vault-open', (vaultPath, create) => {
-    const normalized = normalizePath(vaultPath) || getCurrentVault()?.path;
-    if (!normalized) return 'folder not found';
-    const existing = getVaultRecordByPath(normalized);
-    if (!existing && !create) {
-      void openDirectoryDialog({
-        title: 'Select the vault folder to reopen',
-      })
-        .then(() => launchMainApp(getCurrentVault()?.path))
-        .catch((error) => {
-          if (error?.name !== 'AbortError') console.error(error);
-        });
-      return true;
-    }
-    if (existing && !vaultHandles.has(existing.id) && !create) {
-      void openDirectoryDialog({
-        title: `Locate vault: ${existing.name || path.basename(existing.path)}`,
-        vaultId: existing.id,
-      })
-        .then(() => launchMainApp(getCurrentVault()?.path))
-        .catch((error) => {
-          if (error?.name !== 'AbortError') console.error(error);
-        });
-      return true;
-    }
-    const nextVault = existing || upsertVaultRecord({
-      id: createVaultId(),
-      name: path.basename(normalized),
-      path: normalized,
-      ts: Date.now(),
-      open: true,
-    });
-    if (create) virtualDirs.add(normalized);
-    selectedDirectoryHandle = vaultHandles.get(nextVault.id) ?? null;
-    setCurrentVault(nextVault);
-    void ensureVaultPathExists(normalized, create).catch((error) => console.error(error));
-    if (selectedDirectoryHandle) {
-      void refreshSelectedVaultCache().catch((error) => console.error(error));
-    }
-    if (document.body.classList.contains('starter')) {
-      void launchMainApp(normalized).catch((error) => console.error(error));
-    }
-    return true;
-  }, { emitOnSend: true, description: 'Opens or creates a vault at a path and switches the active vault in the web shell.', args: ['path', 'create'], returns: 'boolean|string' });
+  registerChannel('vault-open', (vaultPath, create) => browserVaultAdapter.openVault(vaultPath, create), { emitOnSend: true, description: 'Opens or creates a vault at a path and switches the active vault in the web shell.', args: ['path', 'create'], returns: 'boolean|string' });
   ipcChannelDocs['choose-vault'] = {
     description: 'Opens a browser directory picker and maps the selection to a virtual vault path.',
     args: [],
     returns: 'Promise<object>',
   };
-  electronStub.ipcRenderer.handle('choose-vault', () => pickVaultDirectory());
-  electronStub.ipcRenderer.handleSendSync('choose-vault', () => getCurrentVault());
+  electronStub.ipcRenderer.handle('choose-vault', () => browserVaultAdapter.pickVaultDirectory());
+  electronStub.ipcRenderer.handleSendSync('choose-vault', () => browserVaultAdapter.getCurrentVault());
   electronStub.ipcRenderer.handleSend('choose-vault', ({ emit }) => {
-    emit('choose-vault', getCurrentVault());
-    return getCurrentVault();
+    emit('choose-vault', browserVaultAdapter.getCurrentVault());
+    return browserVaultAdapter.getCurrentVault();
   });
-  registerChannel('vault-remove', (vaultPath) => {
-    const existing = getVaultRecordByPath(vaultPath);
-    if (!existing) return false;
-    if (currentVault?.id === existing.id) setCurrentVault(null);
-    void deleteVaultHandle(existing.id).catch((error) => console.error(error));
-    removeVaultRecord(existing.id);
-    clearVaultCache(existing.path);
-    return true;
-  }, { emitOnSend: true, description: 'Removes a vault from the registry when it is not open.', args: ['path'], returns: 'boolean' });
-  registerChannel('vault-move', (fromPath, toPath) => {
-    const existing = getVaultRecordByPath(fromPath);
-    if (!existing) return 'folder not found';
-    const updated = upsertVaultRecord({
-      ...existing,
-      path: normalizePath(toPath),
-      ts: Date.now(),
-    });
-    if (currentVault?.id === existing.id) setCurrentVault(updated);
-    return '';
-  }, { emitOnSend: true, description: 'Moves a vault on disk and updates its registered path.', args: ['fromPath', 'toPath'], returns: 'string' });
+  registerChannel('vault-remove', (vaultPath) => browserVaultAdapter.removeVault(vaultPath), { emitOnSend: true, description: 'Removes a vault from the registry when it is not open.', args: ['path'], returns: 'boolean' });
+  registerChannel('vault-move', (fromPath, toPath) => browserVaultAdapter.moveVault(fromPath, toPath), { emitOnSend: true, description: 'Moves a vault on disk and updates its registered path.', args: ['fromPath', 'toPath'], returns: 'string' });
   registerChannel('vault-message', () => '', { emitOnSend: true, description: 'Broadcasts a message to a vault window.', args: ['path', 'message'], returns: 'string' });
   registerChannel('version', () => OBSIDIAN_VERSION, { emitOnSend: true, description: 'Returns the app package version.', returns: 'string' });
   registerChannel('is-dev', () => undefined, { emitOnSend: true, description: 'Reports whether the desktop host is a dev build; intentionally returns undefined for now.', returns: 'undefined' });
@@ -1166,9 +1105,9 @@ function installShims() {
   registerChannel('documents-dir', () => '/documents', { emitOnSend: true, description: 'Returns the documents directory path used by the host.', returns: 'string' });
   registerChannel('resources', () => '/', { emitOnSend: true, description: 'Returns the desktop resources/app path.', returns: 'string' });
   registerChannel('file-url', () => `${window.location.origin}/`, { emitOnSend: true, description: 'Returns the resource file URL prefix used by the desktop host.', returns: 'string' });
-  registerChannel('get-sandbox-vault-path', () => SANDBOX_VAULT_PATH, { emitOnSend: true, description: 'Returns the sandbox vault path.', returns: 'string' });
+  registerChannel('get-sandbox-vault-path', () => browserVaultAdapter.getSandboxVaultPath(), { emitOnSend: true, description: 'Returns the sandbox vault path.', returns: 'string' });
   registerChannel('get-documents-path', () => '/documents', { emitOnSend: true, description: 'Legacy alias for documents-dir.', returns: 'string' });
-  registerChannel('get-default-vault-path', () => getCurrentVault()?.path || VIRTUAL_VAULT_ROOT, { emitOnSend: true, description: 'Returns the host default vault path suggestion.', returns: 'string' });
+  registerChannel('get-default-vault-path', () => browserVaultAdapter.getDefaultVaultPath(), { emitOnSend: true, description: 'Returns the host default vault path suggestion.', returns: 'string' });
   registerChannel('adblock-frequency', () => 4, { emitOnSend: true, description: 'Reads or updates the adblock refresh interval in days.', args: ['days'], returns: 'number' });
   registerChannel('adblock-lists', () => [...DEFAULT_ADBLOCK_LISTS], { emitOnSend: true, description: 'Reads or updates the adblock subscription URL list.', args: ['lists'], returns: 'string[]' });
   registerChannel('update', () => '', { emitOnSend: true, description: 'Returns the current update status string.', returns: 'string' });
@@ -1284,16 +1223,17 @@ function installShims() {
     electronStub,
     ipcChannels: ipcChannelDocs,
     ipcRenderer: electronStub.ipcRenderer,
-    getCurrentVault,
-    listVaults: getVaultEntries,
-    listVirtualFs: listStoredFiles,
+    getCurrentVault: browserVaultAdapter.getCurrentVault,
+    listVaults: browserVaultAdapter.listVaults,
+    listVirtualFs: browserVaultAdapter.listVirtualFs,
     launchMainApp,
-    chooseCreateVaultParent,
-    createLocalVault,
-    openFolderAsVault,
-    pickVaultDirectory,
-    resetVirtualFs,
-    selectedDirectoryHandle: () => selectedDirectoryHandle,
+    chooseCreateVaultParent: browserVaultAdapter.chooseCreateVaultParent,
+    createLocalVault: browserVaultAdapter.createLocalVault,
+    openFolderAsVault: browserVaultAdapter.openFolderAsVault,
+    pickVaultDirectory: browserVaultAdapter.pickVaultDirectory,
+    resetVirtualFs: browserVaultAdapter.resetVirtualFs,
+    selectedDirectoryHandle: browserVaultAdapter.getSelectedDirectoryHandle,
+    vaultAdapter: browserVaultAdapter,
     showOpenDialogSyncCompat(options) {
       const result = electronStub.remote.dialog.showOpenDialogSync(options);
       return Array.isArray(result) && result.length > 0 ? result[0] : null;
@@ -1315,10 +1255,7 @@ async function launchMainApp(vaultPath = currentVault?.path) {
   if (!nextPath) throw new Error('No vault selected');
   const existing = getVaultRecordByPath(nextPath);
   setCurrentVault(existing || { ...(getCurrentVault() || {}), path: nextPath });
-  if (selectedDirectoryHandle) {
-    await refreshSelectedVaultCache();
-  }
-  await ensureVaultBootstrapFiles(currentVault.path);
+  await browserVaultAdapter.prepareForLaunch();
   for (const element of document.querySelectorAll('.starter-screen, .modal-container, .prompt')) {
     element.remove();
   }
@@ -1392,6 +1329,103 @@ async function createLocalVault(ipcRenderer, messages, NoticeCtor, vaultName, sy
   }
 }
 
+const browserVaultAdapter = {
+  mode: 'browser',
+  async init() {
+    await restoreVaultHandles().catch((error) => console.error(error));
+    if (currentVault?.id && vaultHandles.has(currentVault.id)) {
+      selectedDirectoryHandle = vaultHandles.get(currentVault.id);
+    }
+  },
+  getCurrentVault,
+  listVaults: getVaultEntries,
+  listVirtualFs: listStoredFiles,
+  resetVirtualFs,
+  getDefaultVaultPath() {
+    return getCurrentVault()?.path || VIRTUAL_VAULT_ROOT;
+  },
+  getSandboxVaultPath() {
+    return SANDBOX_VAULT_PATH;
+  },
+  getSelectedDirectoryHandle() {
+    return selectedDirectoryHandle;
+  },
+  pickVaultDirectory,
+  chooseCreateVaultParent,
+  openDirectoryDialog,
+  openDirectoryDialogSync,
+  openFolderAsVault,
+  createLocalVault,
+  async openVault(vaultPath, create) {
+    const normalized = normalizePath(vaultPath) || getCurrentVault()?.path;
+    if (!normalized) return 'folder not found';
+    const existing = getVaultRecordByPath(normalized);
+    if (!existing && !create) {
+      void openDirectoryDialog({ title: 'Select the vault folder to reopen' })
+        .then(() => launchMainApp(getCurrentVault()?.path))
+        .catch((error) => {
+          if (error?.name !== 'AbortError') console.error(error);
+        });
+      return true;
+    }
+    if (existing && !vaultHandles.has(existing.id) && !create) {
+      void openDirectoryDialog({
+        title: `Locate vault: ${existing.name || path.basename(existing.path)}`,
+        vaultId: existing.id,
+      })
+        .then(() => launchMainApp(getCurrentVault()?.path))
+        .catch((error) => {
+          if (error?.name !== 'AbortError') console.error(error);
+        });
+      return true;
+    }
+    const nextVault = existing || upsertVaultRecord({
+      id: createVaultId(),
+      name: path.basename(normalized),
+      path: normalized,
+      ts: Date.now(),
+      open: true,
+    });
+    if (create) virtualDirs.add(normalized);
+    selectedDirectoryHandle = vaultHandles.get(nextVault.id) ?? null;
+    setCurrentVault(nextVault);
+    void ensureVaultPathExists(normalized, create).catch((error) => console.error(error));
+    if (selectedDirectoryHandle) {
+      void refreshSelectedVaultCache().catch((error) => console.error(error));
+    }
+    if (document.body.classList.contains('starter')) {
+      void launchMainApp(normalized).catch((error) => console.error(error));
+    }
+    return true;
+  },
+  removeVault(vaultPath) {
+    const existing = getVaultRecordByPath(vaultPath);
+    if (!existing) return false;
+    if (currentVault?.id === existing.id) setCurrentVault(null);
+    void deleteVaultHandle(existing.id).catch((error) => console.error(error));
+    removeVaultRecord(existing.id);
+    clearVaultCache(existing.path);
+    return true;
+  },
+  moveVault(fromPath, toPath) {
+    const existing = getVaultRecordByPath(fromPath);
+    if (!existing) return 'folder not found';
+    const updated = upsertVaultRecord({
+      ...existing,
+      path: normalizePath(toPath),
+      ts: Date.now(),
+    });
+    if (currentVault?.id === existing.id) setCurrentVault(updated);
+    return '';
+  },
+  async prepareForLaunch() {
+    if (selectedDirectoryHandle) {
+      await refreshSelectedVaultCache();
+    }
+    await ensureVaultBootstrapFiles(currentVault.path);
+  },
+};
+
 export async function bootBrowserApp() {
   window.addEventListener('error', (event) => {
     console.error(event.error || event.message);
@@ -1403,10 +1437,7 @@ export async function bootBrowserApp() {
     setStatus(`Unhandled rejection: ${String(event.reason)}`, 'error');
   });
 
-  await restoreVaultHandles().catch((error) => console.error(error));
-  if (currentVault?.id && vaultHandles.has(currentVault.id)) {
-    selectedDirectoryHandle = vaultHandles.get(currentVault.id);
-  }
+  await browserVaultAdapter.init();
   installShims();
   setStatus('Loading extracted Obsidian starter screen...');
 

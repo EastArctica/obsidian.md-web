@@ -1,4 +1,5 @@
 import { bootBrowserApp } from './targets/browser/index.js';
+import { bootSelfhostedApp } from './targets/selfhosted/index.js';
 
 const target = import.meta.env.VITE_OBSIDIAN_TARGET || 'browser';
 
@@ -7,7 +8,7 @@ async function boot() {
     case 'browser':
       return bootBrowserApp();
     case 'selfhosted':
-      throw new Error('Selfhosted target is not implemented yet');
+      return bootSelfhostedApp();
     default:
       throw new Error(`Unknown Obsidian target: ${target}`);
   }
