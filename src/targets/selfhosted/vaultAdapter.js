@@ -1,9 +1,11 @@
+import { createNotImplementedVaultAdapterError, defineVaultAdapter } from '../../core/vaultAdapter.js';
+
 export function createSelfhostedVaultAdapter() {
   const notImplemented = () => {
-    throw new Error('Selfhosted vault adapter is not implemented yet');
+    throw createNotImplementedVaultAdapterError('Selfhosted');
   };
 
-  return {
+  return defineVaultAdapter({
     mode: 'selfhosted',
     async init() {},
     getCurrentVault() {
@@ -35,5 +37,5 @@ export function createSelfhostedVaultAdapter() {
     removeVault: notImplemented,
     moveVault: notImplemented,
     prepareForLaunch: notImplemented,
-  };
+  });
 }

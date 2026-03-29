@@ -6,6 +6,7 @@ import { createScriptLoader } from '../../core/runtime/loadScripts.js';
 import { isBinaryLike as coreIsBinaryLike, isTextLikePath as coreIsTextLikePath, mimeTypeForPath as coreMimeTypeForPath, missingFileFallback as coreMissingFileFallback, normalizeEncoding as coreNormalizeEncoding, toUint8Array as coreToUint8Array } from '../../core/utils/binary.js';
 import { buildVirtualVaultPath as coreBuildVirtualVaultPath, ensureParentDirs as coreEnsureParentDirs, normalizePath as coreNormalizePath, safeVaultName as coreSafeVaultName, splitRelativePath as coreSplitRelativePath } from '../../core/utils/path.js';
 import { createStatusUi } from '../../core/utils/statusUi.js';
+import { createBrowserVaultAdapter } from './vaultAdapter.js';
 
 const statusUi = createStatusUi();
 const { setStatus: setStatusCore, showVaultPickerGlow: showVaultPickerGlowCore, hideVaultPickerGlow: hideVaultPickerGlowCore, clearStatus } = statusUi;
@@ -1329,102 +1330,38 @@ async function createLocalVault(ipcRenderer, messages, NoticeCtor, vaultName, sy
   }
 }
 
-const browserVaultAdapter = {
-  mode: 'browser',
-  async init() {
-    await restoreVaultHandles().catch((error) => console.error(error));
-    if (currentVault?.id && vaultHandles.has(currentVault.id)) {
-      selectedDirectoryHandle = vaultHandles.get(currentVault.id);
-    }
-  },
+const browserVaultAdapter = createBrowserVaultAdapter({
   getCurrentVault,
-  listVaults: getVaultEntries,
-  listVirtualFs: listStoredFiles,
+  getVaultEntries,
+  listStoredFiles,
   resetVirtualFs,
-  getDefaultVaultPath() {
-    return getCurrentVault()?.path || VIRTUAL_VAULT_ROOT;
-  },
-  getSandboxVaultPath() {
-    return SANDBOX_VAULT_PATH;
-  },
-  getSelectedDirectoryHandle() {
-    return selectedDirectoryHandle;
-  },
+  VIRTUAL_VAULT_ROOT,
+  SANDBOX_VAULT_PATH,
+  getSelectedDirectoryHandle: () => selectedDirectoryHandle,
+  setSelectedDirectoryHandle: (handle) => { selectedDirectoryHandle = handle; },
   pickVaultDirectory,
   chooseCreateVaultParent,
   openDirectoryDialog,
   openDirectoryDialogSync,
   openFolderAsVault,
   createLocalVault,
-  async openVault(vaultPath, create) {
-    const normalized = normalizePath(vaultPath) || getCurrentVault()?.path;
-    if (!normalized) return 'folder not found';
-    const existing = getVaultRecordByPath(normalized);
-    if (!existing && !create) {
-      void openDirectoryDialog({ title: 'Select the vault folder to reopen' })
-        .then(() => launchMainApp(getCurrentVault()?.path))
-        .catch((error) => {
-          if (error?.name !== 'AbortError') console.error(error);
-        });
-      return true;
-    }
-    if (existing && !vaultHandles.has(existing.id) && !create) {
-      void openDirectoryDialog({
-        title: `Locate vault: ${existing.name || path.basename(existing.path)}`,
-        vaultId: existing.id,
-      })
-        .then(() => launchMainApp(getCurrentVault()?.path))
-        .catch((error) => {
-          if (error?.name !== 'AbortError') console.error(error);
-        });
-      return true;
-    }
-    const nextVault = existing || upsertVaultRecord({
-      id: createVaultId(),
-      name: path.basename(normalized),
-      path: normalized,
-      ts: Date.now(),
-      open: true,
-    });
-    if (create) virtualDirs.add(normalized);
-    selectedDirectoryHandle = vaultHandles.get(nextVault.id) ?? null;
-    setCurrentVault(nextVault);
-    void ensureVaultPathExists(normalized, create).catch((error) => console.error(error));
-    if (selectedDirectoryHandle) {
-      void refreshSelectedVaultCache().catch((error) => console.error(error));
-    }
-    if (document.body.classList.contains('starter')) {
-      void launchMainApp(normalized).catch((error) => console.error(error));
-    }
-    return true;
-  },
-  removeVault(vaultPath) {
-    const existing = getVaultRecordByPath(vaultPath);
-    if (!existing) return false;
-    if (currentVault?.id === existing.id) setCurrentVault(null);
-    void deleteVaultHandle(existing.id).catch((error) => console.error(error));
-    removeVaultRecord(existing.id);
-    clearVaultCache(existing.path);
-    return true;
-  },
-  moveVault(fromPath, toPath) {
-    const existing = getVaultRecordByPath(fromPath);
-    if (!existing) return 'folder not found';
-    const updated = upsertVaultRecord({
-      ...existing,
-      path: normalizePath(toPath),
-      ts: Date.now(),
-    });
-    if (currentVault?.id === existing.id) setCurrentVault(updated);
-    return '';
-  },
-  async prepareForLaunch() {
-    if (selectedDirectoryHandle) {
-      await refreshSelectedVaultCache();
-    }
-    await ensureVaultBootstrapFiles(currentVault.path);
-  },
-};
+  normalizePath,
+  getVaultRecordByPath,
+  createVaultId,
+  upsertVaultRecord,
+  virtualDirs,
+  vaultHandles,
+  setCurrentVault,
+  ensureVaultPathExists,
+  refreshSelectedVaultCache,
+  launchMainApp,
+  deleteVaultHandle,
+  removeVaultRecord,
+  clearVaultCache,
+  ensureVaultBootstrapFiles,
+  restoreVaultHandles,
+  getCurrentVaultState: () => currentVault,
+});
 
 export async function bootBrowserApp() {
   window.addEventListener('error', (event) => {
