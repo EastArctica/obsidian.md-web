@@ -1,0 +1,19 @@
+{
+  "name": "obsidian-vite-web-shell",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@electron/asar": "^4.0.1",
+    "buffer": "^6.0.3",
+    "path-browserify": "^1.0.1"
+  },
+  "devDependencies": {
+    "vite": "^7.1.0"
+  }
+}

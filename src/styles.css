@@ -1,0 +1,55 @@
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+}
+
+body.vault-picker-glow::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 2147483646;
+  pointer-events: none;
+  background: radial-gradient(circle at center, rgba(255, 204, 92, 0.18), rgba(255, 204, 92, 0.02) 45%, rgba(0, 0, 0, 0) 70%);
+  animation: vault-picker-pulse 1.1s ease-in-out infinite;
+}
+
+.shim-status {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483647;
+  max-width: min(520px, calc(100vw - 32px));
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  background: rgba(8, 12, 20, 0.9);
+  color: #d7e0ea;
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(10px);
+}
+
+.shim-status.is-warning {
+  border-color: rgba(255, 196, 92, 0.35);
+  color: #ffe2a5;
+}
+
+.shim-status.is-error {
+  border-color: rgba(255, 120, 120, 0.4);
+  color: #ffd2d2;
+}
+
+@keyframes vault-picker-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
