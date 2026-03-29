@@ -2,11 +2,14 @@ import { Buffer } from 'buffer';
 import path from 'path-browserify';
 import { createElectronStub as createCoreElectronStub } from '../../core/electronStub.js';
 import { createIpcRendererShim as createCoreIpcRendererShim } from '../../core/ipc/createIpcRendererShim.js';
+import { registerCommonChannels } from '../../core/ipc/registerCommonChannels.ts';
+import { registerVaultChannels } from '../../core/ipc/registerVaultChannels.ts';
 import { createScriptLoader } from '../../core/runtime/loadScripts.js';
 import { isBinaryLike as coreIsBinaryLike, isTextLikePath as coreIsTextLikePath, mimeTypeForPath as coreMimeTypeForPath, missingFileFallback as coreMissingFileFallback, normalizeEncoding as coreNormalizeEncoding, toUint8Array as coreToUint8Array } from '../../core/utils/binary.js';
 import { buildVirtualVaultPath as coreBuildVirtualVaultPath, ensureParentDirs as coreEnsureParentDirs, normalizePath as coreNormalizePath, safeVaultName as coreSafeVaultName, splitRelativePath as coreSplitRelativePath } from '../../core/utils/path.js';
 import { createStatusUi } from '../../core/utils/statusUi.js';
 import { createBrowserVaultAdapter } from './vaultAdapter.js';
+import { createBrowserDialogs } from './dialogs.ts';
 import { createBrowserVaultRegistry } from './vaultRegistry.ts';
 import { createBrowserHandleStore } from './handleStore.ts';
 import { createBrowserFsAdapter } from './fsAdapter.ts';
@@ -79,6 +82,7 @@ let selectedCreateVaultParentHandle = null;
 let selectedCreateVaultParentPath = '';
 let selectedCreateVaultParentLabel = '';
 const vaultHandles = handleStore.handles;
+let dialogs;
 
 function normalizePath(value) {
   return coreNormalizePath(value);
@@ -241,6 +245,29 @@ const browserFsAdapter = createBrowserFsAdapter({
 });
 const { virtualDirs } = browserFsAdapter;
 
+dialogs = createBrowserDialogs({
+  buildVirtualVaultPath,
+  browserVaultAdapterRef: () => browserVaultAdapter,
+  chooseCreateVaultParentLabel: (label) => { selectedCreateVaultParentLabel = label; },
+  createVaultId,
+  getCurrentVault,
+  getVaultRecordById,
+  getVaultRecordByPath,
+  hideVaultPickerGlow,
+  launchMainApp,
+  normalizePath,
+  persistVaultHandle,
+  refreshSelectedVaultCache,
+  safeVaultName,
+  setCurrentVault,
+  setSelectedCreateVaultParentHandle: (handle) => { selectedCreateVaultParentHandle = handle; },
+  getSelectedCreateVaultParentHandle: () => selectedCreateVaultParentHandle,
+  setSelectedCreateVaultParentPath: (value) => { selectedCreateVaultParentPath = value; },
+  setSelectedDirectoryHandle: (handle) => { selectedDirectoryHandle = handle; },
+  showVaultPickerGlow,
+  upsertVaultRecord,
+});
+
 function isCurrentVaultPath(filePath) {
   const current = getCurrentVault();
   const target = normalizePath(filePath);
@@ -311,101 +338,19 @@ function buildVaultList() {
 }
 
 async function pickVaultDirectory() {
-  if (typeof window.showDirectoryPicker !== 'function') {
-    throw new Error('Directory picker is not supported in this browser');
-  }
-
-  await openDirectoryDialog();
-  return getCurrentVault();
+  return dialogs.pickVaultDirectory();
 }
 
 async function openDirectoryDialog(options = {}) {
-  showVaultPickerGlow(options.title || 'Select the vault folder to continue...');
-  try {
-    const handle = await window.showDirectoryPicker({
-      id: 'obsidian-web-vault',
-      startIn: 'documents',
-    });
-    const vaultPath = buildVirtualVaultPath(handle.name);
-    const existing = options.vaultId ? getVaultRecordById(options.vaultId) : getVaultRecordByPath(vaultPath);
-    const vault = upsertVaultRecord({
-      id: existing?.id || createVaultId(),
-      name: handle.name || 'vault',
-      path: vaultPath,
-      ts: Date.now(),
-      open: true,
-    });
-    selectedDirectoryHandle = handle;
-    await persistVaultHandle(vault.id, handle);
-    setCurrentVault(vault);
-    await refreshSelectedVaultCache();
-
-    window.dispatchEvent(
-      new CustomEvent('obsidian-web:vault-picked', {
-        detail: {
-          handle,
-          options,
-          vault: getCurrentVault(),
-        },
-      }),
-    );
-
-    return {
-      canceled: false,
-      filePaths: [getCurrentVault().path],
-    };
-  } finally {
-    hideVaultPickerGlow();
-  }
+  return dialogs.openDirectoryDialog(options);
 }
 
 async function chooseCreateVaultParent(title, applyPath) {
-  showVaultPickerGlow(title || 'Select where to create the vault...');
-  try {
-    const handle = await window.showDirectoryPicker({
-      id: 'obsidian-web-vault-parent',
-      startIn: 'documents',
-    });
-    selectedCreateVaultParentHandle = handle;
-    selectedCreateVaultParentPath = buildVirtualVaultPath(handle.name || 'vaults');
-    selectedCreateVaultParentLabel = safeVaultName(handle.name || 'vaults');
-    if (typeof applyPath === 'function') applyPath(selectedCreateVaultParentLabel);
-    return selectedCreateVaultParentPath;
-  } finally {
-    hideVaultPickerGlow();
-  }
+  return dialogs.chooseCreateVaultParent(title, applyPath);
 }
 
 function openDirectoryDialogSync(options = {}) {
-  const fallbackPath = normalizePath(options.defaultPath) || getCurrentVault()?.path || VIRTUAL_VAULT_ROOT;
-  const chosenPath = window.prompt(options.title || 'Choose vault folder', fallbackPath);
-
-  if (chosenPath == null) return undefined;
-
-  const normalizedPath = normalizePath(chosenPath) || fallbackPath;
-  const existing = getVaultRecordByPath(normalizedPath);
-  setCurrentVault(existing || upsertVaultRecord({
-    id: existing?.id || createVaultId(),
-    name: path.basename(normalizedPath),
-    path: normalizedPath,
-    ts: Date.now(),
-    open: true,
-  }));
-  selectedDirectoryHandle = null;
-  clearVaultCache(currentVault.path);
-  virtualDirs.add(currentVault.path);
-  window.dispatchEvent(
-    new CustomEvent('obsidian-web:vault-picked', {
-      detail: {
-        handle: null,
-        options,
-        vault: getCurrentVault(),
-        syncFallback: true,
-      },
-    }),
-  );
-
-  return [getCurrentVault().path];
+  return dialogs.openDirectoryDialogSync(options);
 }
 
 function createIpcRendererShim() {
@@ -455,86 +400,19 @@ function installShims() {
     window.dispatchEvent(new CustomEvent(name, { detail }));
   };
 
-  registerChannel('vault', () => browserVaultAdapter.getCurrentVault(), { emitOnSend: true, description: 'Returns the current vault associated with the active web contents.', returns: 'object|null' });
-  registerChannel('vault-list', () => buildVaultList(), { emitOnSend: true, description: 'Returns the host-maintained vault registry keyed by vault id.', returns: 'object' });
-  registerChannel('vault-open', (vaultPath, create) => browserVaultAdapter.openVault(vaultPath, create), { emitOnSend: true, description: 'Opens or creates a vault at a path and switches the active vault in the web shell.', args: ['path', 'create'], returns: 'boolean|string' });
-  ipcChannelDocs['choose-vault'] = {
-    description: 'Opens a browser directory picker and maps the selection to a virtual vault path.',
-    args: [],
-    returns: 'Promise<object>',
-  };
-  electronStub.ipcRenderer.handle('choose-vault', () => browserVaultAdapter.pickVaultDirectory());
-  electronStub.ipcRenderer.handleSendSync('choose-vault', () => browserVaultAdapter.getCurrentVault());
-  electronStub.ipcRenderer.handleSend('choose-vault', ({ emit }) => {
-    emit('choose-vault', browserVaultAdapter.getCurrentVault());
-    return browserVaultAdapter.getCurrentVault();
+  registerVaultChannels({
+    registerChannel,
+    ipcChannelDocs,
+    ipcRenderer: electronStub.ipcRenderer,
+    vaultAdapter: browserVaultAdapter,
+    buildVaultList,
   });
-  registerChannel('vault-remove', (vaultPath) => browserVaultAdapter.removeVault(vaultPath), { emitOnSend: true, description: 'Removes a vault from the registry when it is not open.', args: ['path'], returns: 'boolean' });
-  registerChannel('vault-move', (fromPath, toPath) => browserVaultAdapter.moveVault(fromPath, toPath), { emitOnSend: true, description: 'Moves a vault on disk and updates its registered path.', args: ['fromPath', 'toPath'], returns: 'string' });
-  registerChannel('vault-message', () => '', { emitOnSend: true, description: 'Broadcasts a message to a vault window.', args: ['path', 'message'], returns: 'string' });
-  registerChannel('version', () => OBSIDIAN_VERSION, { emitOnSend: true, description: 'Returns the app package version.', returns: 'string' });
-  registerChannel('is-dev', () => undefined, { emitOnSend: true, description: 'Reports whether the desktop host is a dev build; intentionally returns undefined for now.', returns: 'undefined' });
-  registerChannel('is-quitting', () => false, { emitOnSend: true, description: 'Reports whether the desktop host is in the middle of quitting.', returns: 'boolean' });
-  registerChannel('desktop-dir', () => '/desktop', { emitOnSend: true, description: 'Returns the desktop directory path used by the host.', returns: 'string' });
-  registerChannel('documents-dir', () => '/documents', { emitOnSend: true, description: 'Returns the documents directory path used by the host.', returns: 'string' });
-  registerChannel('resources', () => '/', { emitOnSend: true, description: 'Returns the desktop resources/app path.', returns: 'string' });
-  registerChannel('file-url', () => `${window.location.origin}/`, { emitOnSend: true, description: 'Returns the resource file URL prefix used by the desktop host.', returns: 'string' });
-  registerChannel('get-sandbox-vault-path', () => browserVaultAdapter.getSandboxVaultPath(), { emitOnSend: true, description: 'Returns the sandbox vault path.', returns: 'string' });
-  registerChannel('get-documents-path', () => '/documents', { emitOnSend: true, description: 'Legacy alias for documents-dir.', returns: 'string' });
-  registerChannel('get-default-vault-path', () => browserVaultAdapter.getDefaultVaultPath(), { emitOnSend: true, description: 'Returns the host default vault path suggestion.', returns: 'string' });
-  registerChannel('adblock-frequency', () => 4, { emitOnSend: true, description: 'Reads or updates the adblock refresh interval in days.', args: ['days'], returns: 'number' });
-  registerChannel('adblock-lists', () => [...DEFAULT_ADBLOCK_LISTS], { emitOnSend: true, description: 'Reads or updates the adblock subscription URL list.', args: ['lists'], returns: 'string[]' });
-  registerChannel('update', () => '', { emitOnSend: true, description: 'Returns the current update status string.', returns: 'string' });
-  registerChannel('check-update', () => false, { emitOnSend: true, description: 'Triggers update checking and returns whether a check is in progress.', args: ['manual'], returns: 'boolean' });
-  registerChannel('disable-update', () => undefined, { emitOnSend: true, description: 'Reads or toggles the stored auto-update disabled flag.', args: ['enabled'], returns: 'undefined' });
-  registerChannel('disable-gpu', () => undefined, { emitOnSend: true, description: 'Reads or toggles the stored disable-gpu preference.', args: ['enabled'], returns: 'undefined' });
-  registerChannel('insider-build', () => false, { emitOnSend: true, description: 'Reads or toggles insider build mode.', args: ['enabled'], returns: 'boolean' });
-  registerChannel('cli', () => false, { emitOnSend: true, description: 'Reads or toggles the embedded CLI server feature.', args: ['enabled'], returns: 'boolean' });
-  registerChannel('set-icon', () => undefined, { emitOnSend: true, description: 'Updates a tray/app/window icon reference in the desktop host.', args: ['iconName', 'value'], returns: 'undefined' });
-  registerChannel('get-icon', () => undefined, { emitOnSend: true, description: 'Reads a previously stored icon value from the desktop host.', args: ['iconName'], returns: 'undefined' });
-  registerChannel('copy-asar', () => false, { emitOnSend: true, description: 'Copies a downloaded asar into the user data update cache.', args: ['asarPath'], returns: 'boolean' });
-  registerChannel('context-menu', () => undefined, { emitOnSend: true, description: 'Records the sender that most recently opened a context menu.', returns: 'undefined' });
-  registerChannel('request-url', () => undefined, { emitOnSend: true, description: 'Desktop network bridge that performs a request and replies asynchronously over IPC.', args: ['replyChannel', 'requestOptions'], returns: 'undefined' });
-  registerChannel('open-url', () => undefined, { emitOnSend: true, description: 'Requests the host to open or route a URL.', args: ['url'], returns: 'undefined' });
-  registerChannel('trash', () => false, { emitOnSend: true, description: 'Moves a path to the OS trash.', args: ['path'], returns: 'boolean' });
-  registerChannel('set-menu', () => undefined, { emitOnSend: true, description: 'Builds and installs an application menu from a serialized template.', args: ['menuSpec'], returns: 'undefined' });
-  registerChannel('update-menu-items', () => undefined, { emitOnSend: true, description: 'Updates menu item enabled/checked state for the active window.', args: ['menuId', 'itemId', 'patch'], returns: 'undefined' });
-  registerChannel('print-to-pdf', () => undefined, { emitOnSend: true, description: 'Asks the host webContents to print the current page to PDF.', args: ['options'], returns: 'undefined' });
-  registerChannel('relaunch', (...args) => {
-    dispatchHostEvent('obsidian-web:relaunch', { args });
-    return undefined;
-  }, {
-    description: 'Requests an application relaunch and quit sequence.',
-    returns: 'undefined',
-  });
-  registerChannel('frame', (...args) => {
-    dispatchHostEvent('obsidian-web:frame', { args });
-    return undefined;
-  }, {
-    description: 'Reads or updates the stored frame/titlebar preference.',
-    args: ['frameValue'],
-    returns: 'undefined',
-  });
-  registerChannel('sandbox', (...args) => {
-    dispatchHostEvent('obsidian-web:sandbox', { args, path: SANDBOX_VAULT_PATH });
-    return undefined;
-  }, {
-    description: 'Opens the built-in sandbox vault flow.',
-    returns: 'undefined',
-  });
-  registerChannel('starter', (...args) => {
-    dispatchHostEvent('obsidian-web:starter', { args });
-    return undefined;
-  }, {
-    description: 'Opens the starter/create-or-open-vault UI.',
-    returns: 'undefined',
-  });
-  registerChannel('help', (...args) => {
-    dispatchHostEvent('obsidian-web:help', { args });
-    return undefined;
-  }, {
-    description: 'Opens the help UI/window.',
-    returns: 'undefined',
+  registerCommonChannels({
+    registerChannel,
+    dispatchHostEvent,
+    vaultAdapter: browserVaultAdapter,
+    obsidianVersion: OBSIDIAN_VERSION,
+    adblockLists: DEFAULT_ADBLOCK_LISTS,
   });
 
   if (currentVault?.path) virtualDirs.add(currentVault.path);
@@ -641,66 +519,11 @@ async function launchMainApp(vaultPath = currentVault?.path) {
 }
 
 async function openFolderAsVault(ipcRenderer, messages, NoticeCtor) {
-  try {
-    const vault = await pickVaultDirectory();
-    const result = ipcRenderer.sendSync('vault-open', vault.path, false);
-    if (result === true) return true;
-    new NoticeCtor(`${messages.msgErrorFailedToOpenVault()} ${result}.`);
-    return false;
-  } catch (error) {
-    if (error && error.name === 'AbortError') return false;
-    console.error(error);
-    if (NoticeCtor) new NoticeCtor(String(error.message || error));
-    return false;
-  }
+  return dialogs.openFolderAsVault(ipcRenderer, messages, NoticeCtor);
 }
 
 async function createLocalVault(ipcRenderer, messages, NoticeCtor, vaultName, syncConfig) {
-  try {
-    if (!selectedCreateVaultParentHandle) {
-      await chooseCreateVaultParent(`Choose where to create '${vaultName}'...`);
-    }
-    const parentHandle = selectedCreateVaultParentHandle;
-    if (!parentHandle) {
-      if (NoticeCtor) new NoticeCtor(String(messages.msgInvalidFolder?.() || 'Invalid folder'));
-      return false;
-    }
-    const handle = await parentHandle.getDirectoryHandle(vaultName, { create: true });
-    const vaultPath = buildVirtualVaultPath(vaultName);
-    const existing = getVaultRecordByPath(vaultPath);
-    const vault = upsertVaultRecord({
-      id: existing?.id || createVaultId(),
-      name: vaultName,
-      path: vaultPath,
-      ts: Date.now(),
-      open: true,
-    });
-    selectedDirectoryHandle = handle;
-    await persistVaultHandle(vault.id, handle);
-    setCurrentVault(vault);
-    await refreshSelectedVaultCache();
-    const result = ipcRenderer.sendSync('vault-open', vault.path, true);
-    if (result === true) {
-      if (syncConfig) {
-        ipcRenderer.sendSync('vault-message', vault.path, { action: 'sync-setup', vault: JSON.stringify(syncConfig) });
-      } else {
-        ipcRenderer.sendSync('vault-message', vault.path, { action: 'vault-setup' });
-      }
-      selectedCreateVaultParentHandle = null;
-      selectedCreateVaultParentPath = '';
-      selectedCreateVaultParentLabel = '';
-      return true;
-    }
-    new NoticeCtor(`${messages.msgFailedToCreateVault()} ${result}.`);
-    return false;
-  } catch (error) {
-    if (error?.name === 'AbortError') return false;
-    console.error(error);
-    if (NoticeCtor) new NoticeCtor(String(messages.msgFailedToCreateVaultAtLocation?.() || error.message || error));
-    return false;
-  } finally {
-    hideVaultPickerGlow();
-  }
+  return dialogs.createLocalVault(ipcRenderer, messages, NoticeCtor, vaultName, syncConfig);
 }
 
 const browserVaultAdapter = createBrowserVaultAdapter({
