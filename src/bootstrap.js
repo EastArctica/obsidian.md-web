@@ -61,6 +61,9 @@ let vaultRegistry = loadVaultRegistry();
 let currentVault = getMostRecentVault();
 let selectedDirectoryHandle = null;
 let selectedDirectoryVersion = 0;
+let selectedCreateVaultParentHandle = null;
+let selectedCreateVaultParentPath = '';
+let selectedCreateVaultParentLabel = '';
 const vaultHandles = new Map();
 let vaultHandleDbPromise = null;
 
@@ -1007,6 +1010,23 @@ async function openDirectoryDialog(options = {}) {
   }
 }
 
+async function chooseCreateVaultParent(title, applyPath) {
+  showVaultPickerGlow(title || 'Select where to create the vault...');
+  try {
+    const handle = await window.showDirectoryPicker({
+      id: 'obsidian-web-vault-parent',
+      startIn: 'documents',
+    });
+    selectedCreateVaultParentHandle = handle;
+    selectedCreateVaultParentPath = buildVirtualVaultPath(handle.name || 'vaults');
+    selectedCreateVaultParentLabel = safeVaultName(handle.name || 'vaults');
+    if (typeof applyPath === 'function') applyPath(selectedCreateVaultParentLabel);
+    return selectedCreateVaultParentPath;
+  } finally {
+    hideVaultPickerGlow();
+  }
+}
+
 function openDirectoryDialogSync(options = {}) {
   const fallbackPath = normalizePath(options.defaultPath) || getCurrentVault()?.path || VIRTUAL_VAULT_ROOT;
   const chosenPath = window.prompt(options.title || 'Choose vault folder', fallbackPath);
@@ -1591,6 +1611,8 @@ function installShims() {
     listVaults: getVaultEntries,
     listVirtualFs: listStoredFiles,
     launchMainApp,
+    chooseCreateVaultParent,
+    createLocalVault,
     openFolderAsVault,
     pickVaultDirectory,
     resetVirtualFs,
@@ -1660,6 +1682,54 @@ async function openFolderAsVault(ipcRenderer, messages, NoticeCtor) {
     console.error(error);
     if (NoticeCtor) new NoticeCtor(String(error.message || error));
     return false;
+  }
+}
+
+async function createLocalVault(ipcRenderer, messages, NoticeCtor, vaultName, syncConfig) {
+  try {
+    if (!selectedCreateVaultParentHandle) {
+      await chooseCreateVaultParent(`Choose where to create '${vaultName}'...`);
+    }
+    const parentHandle = selectedCreateVaultParentHandle;
+    if (!parentHandle) {
+      if (NoticeCtor) new NoticeCtor(String(messages.msgInvalidFolder?.() || 'Invalid folder'));
+      return false;
+    }
+    const handle = await parentHandle.getDirectoryHandle(vaultName, { create: true });
+    const vaultPath = buildVirtualVaultPath(vaultName);
+    const existing = getVaultRecordByPath(vaultPath);
+    const vault = upsertVaultRecord({
+      id: existing?.id || createVaultId(),
+      name: vaultName,
+      path: vaultPath,
+      ts: Date.now(),
+      open: true,
+    });
+    selectedDirectoryHandle = handle;
+    await persistVaultHandle(vault.id, handle);
+    setCurrentVault(vault);
+    await refreshSelectedVaultCache();
+    const result = ipcRenderer.sendSync('vault-open', vault.path, true);
+    if (result === true) {
+      if (syncConfig) {
+        ipcRenderer.sendSync('vault-message', vault.path, { action: 'sync-setup', vault: JSON.stringify(syncConfig) });
+      } else {
+        ipcRenderer.sendSync('vault-message', vault.path, { action: 'vault-setup' });
+      }
+      selectedCreateVaultParentHandle = null;
+      selectedCreateVaultParentPath = '';
+      selectedCreateVaultParentLabel = '';
+      return true;
+    }
+    new NoticeCtor(`${messages.msgFailedToCreateVault()} ${result}.`);
+    return false;
+  } catch (error) {
+    if (error?.name === 'AbortError') return false;
+    console.error(error);
+    if (NoticeCtor) new NoticeCtor(String(messages.msgFailedToCreateVaultAtLocation?.() || error.message || error));
+    return false;
+  } finally {
+    hideVaultPickerGlow();
   }
 }
 

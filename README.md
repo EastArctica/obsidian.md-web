@@ -41,6 +41,8 @@ The shim state is exposed at `window.__OBSIDIAN_WEB_SHIM__` for debugging.
 - `window.__OBSIDIAN_WEB_SHIM__.listVaults()` shows the persisted recent-vault registry.
 - `window.__OBSIDIAN_WEB_SHIM__.pickVaultDirectory()` can be called manually to use the real browser directory picker.
 - When `vault-open` is triggered for a recent vault without a restored browser handle, the shim now re-prompts with the browser folder picker and shows a temporary page glow while waiting.
+- The starter screen's `Create local vault` flow is patched in-memory to use the browser folder picker and then create/open the selected vault inside the web shim.
+- The `Browse` button on the create-vault screen now uses the browser folder picker, updates the visible location field with a user-facing folder label, and the final `Create` action creates the named vault inside that selected parent folder.
 - `@electron/remote.dialog.showOpenDialog(...)` uses the browser directory picker; `showOpenDialogSync(...)` uses a synchronous prompt fallback because browsers do not provide a true synchronous directory picker.
 - `window.__OBSIDIAN_WEB_SHIM__.showOpenDialogSyncCompat(options)` is the compat hook used by the in-memory `starter.js` patch.
 - `window.__OBSIDIAN_WEB_SHIM__.resetVirtualFs()` clears persisted virtual files/directories back to the default vault roots.
