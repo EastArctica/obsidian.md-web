@@ -37,6 +37,7 @@ Commands:
 - `npm install`
 - `npm run dev`
 - `npm run build`
+- `npm run typecheck`
 
 The shim state is exposed at `window.__OBSIDIAN_WEB_SHIM__` for debugging.
 - `window.__OBSIDIAN_WEB_SHIM__.listVirtualFs()` shows persisted virtual files.

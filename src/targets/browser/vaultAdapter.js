@@ -1,5 +1,5 @@
 import path from 'path-browserify';
-import { defineVaultAdapter } from '../../core/vaultAdapter.js';
+import { defineVaultAdapter } from '../../core/vaultAdapter.ts';
 
 export function createBrowserVaultAdapter(deps) {
   const {

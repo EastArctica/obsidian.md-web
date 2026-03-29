@@ -1,4 +1,4 @@
-import { createNotImplementedVaultAdapterError, defineVaultAdapter } from '../../core/vaultAdapter.js';
+import { createNotImplementedVaultAdapterError, defineVaultAdapter } from '../../core/vaultAdapter.ts';
 
 export function createSelfhostedVaultAdapter() {
   const notImplemented = () => {
