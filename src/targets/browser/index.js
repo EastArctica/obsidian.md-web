@@ -7,6 +7,9 @@ import { isBinaryLike as coreIsBinaryLike, isTextLikePath as coreIsTextLikePath,
 import { buildVirtualVaultPath as coreBuildVirtualVaultPath, ensureParentDirs as coreEnsureParentDirs, normalizePath as coreNormalizePath, safeVaultName as coreSafeVaultName, splitRelativePath as coreSplitRelativePath } from '../../core/utils/path.js';
 import { createStatusUi } from '../../core/utils/statusUi.js';
 import { createBrowserVaultAdapter } from './vaultAdapter.js';
+import { createBrowserVaultRegistry } from './vaultRegistry.ts';
+import { createBrowserHandleStore } from './handleStore.ts';
+import { createBrowserFsAdapter } from './fsAdapter.ts';
 
 const statusUi = createStatusUi();
 const { setStatus: setStatusCore, showVaultPickerGlow: showVaultPickerGlowCore, hideVaultPickerGlow: hideVaultPickerGlowCore, clearStatus } = statusUi;
@@ -37,7 +40,6 @@ const mainAppScriptQueue = [
   '/app.js',
 ];
 
-const syncStore = new Map();
 const STORAGE_PREFIX = 'obsidian-web:vfs:';
 const VAULTS_STORAGE_KEY = 'obsidian-web:vaults';
 const VIRTUAL_VAULT_ROOT = '/obsidian-web';
@@ -63,45 +65,31 @@ const MIME_BY_EXTENSION = {
   '.webm': 'video/webm',
   '.webp': 'image/webp',
 };
-const virtualDirs = new Set(['/', VIRTUAL_VAULT_ROOT, SANDBOX_VAULT_PATH]);
-const vaultObjectUrls = new Map();
-let vaultRegistry = loadVaultRegistry();
-let currentVault = getMostRecentVault();
+const vaultRegistryStore = createBrowserVaultRegistry({
+  storageKey: VAULTS_STORAGE_KEY,
+  normalizePath,
+});
+const handleStore = createBrowserHandleStore({
+  dbName: VAULT_HANDLES_DB,
+  storeName: VAULT_HANDLES_STORE,
+});
+let currentVault = vaultRegistryStore.getCurrentVault();
 let selectedDirectoryHandle = null;
-let selectedDirectoryVersion = 0;
 let selectedCreateVaultParentHandle = null;
 let selectedCreateVaultParentPath = '';
 let selectedCreateVaultParentLabel = '';
-const vaultHandles = new Map();
-let vaultHandleDbPromise = null;
+const vaultHandles = handleStore.handles;
 
 function normalizePath(value) {
   return coreNormalizePath(value);
 }
 
-function loadVaultRegistry() {
-  try {
-    const raw = localStorage.getItem(VAULTS_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function saveVaultRegistry() {
-  localStorage.setItem(VAULTS_STORAGE_KEY, JSON.stringify(vaultRegistry));
-}
-
 function getVaultEntries() {
-  return Object.entries(vaultRegistry)
-    .map(([id, record]) => ({ id, ...record }))
-    .sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  return vaultRegistryStore.getVaultEntries();
 }
 
 function getMostRecentVault() {
-  return getVaultEntries()[0] ?? null;
+  return vaultRegistryStore.getMostRecentVault();
 }
 
 function createVaultId() {
@@ -119,97 +107,39 @@ function buildVirtualVaultPath(name) {
 }
 
 function upsertVaultRecord(record) {
-  const next = {
-    ...vaultRegistry[record.id],
-    ...record,
-    ts: record.ts ?? Date.now(),
-  };
-  vaultRegistry = {
-    ...vaultRegistry,
-    [record.id]: next,
-  };
-  saveVaultRegistry();
-  return { id: record.id, ...next };
+  return vaultRegistryStore.upsertVaultRecord(record);
 }
 
 function getVaultRecordByPath(vaultPath) {
-  const normalized = normalizePath(vaultPath);
-  return getVaultEntries().find((entry) => normalizePath(entry.path) === normalized) ?? null;
+  return vaultRegistryStore.getVaultRecordByPath(vaultPath);
 }
 
 function getVaultRecordById(id) {
-  const record = vaultRegistry[id];
-  return record ? { id, ...record } : null;
+  return vaultRegistryStore.getVaultRecordById(id);
 }
 
 function removeVaultRecord(id) {
-  const { [id]: _removed, ...rest } = vaultRegistry;
-  vaultRegistry = rest;
-  saveVaultRegistry();
-}
-
-function openVaultHandleDb() {
-  if (vaultHandleDbPromise) return vaultHandleDbPromise;
-  vaultHandleDbPromise = new Promise((resolve, reject) => {
-    const request = indexedDB.open(VAULT_HANDLES_DB, 1);
-    request.onupgradeneeded = () => {
-      request.result.createObjectStore(VAULT_HANDLES_STORE);
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-  return vaultHandleDbPromise;
+  return vaultRegistryStore.removeVaultRecord(id);
 }
 
 async function persistVaultHandle(id, handle) {
-  vaultHandles.set(id, handle);
-  const db = await openVaultHandleDb();
-  await new Promise((resolve, reject) => {
-    const tx = db.transaction(VAULT_HANDLES_STORE, 'readwrite');
-    tx.objectStore(VAULT_HANDLES_STORE).put(handle, id);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
+  return handleStore.persistVaultHandle(id, handle);
 }
 
 async function deleteVaultHandle(id) {
-  vaultHandles.delete(id);
-  const db = await openVaultHandleDb();
-  await new Promise((resolve, reject) => {
-    const tx = db.transaction(VAULT_HANDLES_STORE, 'readwrite');
-    tx.objectStore(VAULT_HANDLES_STORE).delete(id);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
+  return handleStore.deleteVaultHandle(id);
 }
 
 async function restoreVaultHandles() {
-  const db = await openVaultHandleDb();
-  const ids = await new Promise((resolve, reject) => {
-    const tx = db.transaction(VAULT_HANDLES_STORE, 'readonly');
-    const request = tx.objectStore(VAULT_HANDLES_STORE).getAllKeys();
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-  await Promise.all(ids.map(async (id) => {
-    const handle = await new Promise((resolve, reject) => {
-      const tx = db.transaction(VAULT_HANDLES_STORE, 'readonly');
-      const request = tx.objectStore(VAULT_HANDLES_STORE).get(id);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    if (handle) vaultHandles.set(id, handle);
-  }));
+  return handleStore.restoreVaultHandles();
 }
 
 function isVaultPath(filePath) {
-  const target = normalizePath(filePath);
-  return getVaultEntries().some((entry) => target === entry.path || target.startsWith(`${entry.path}/`));
+  return browserFsAdapter.isVaultPath(filePath);
 }
 
 function hasStoredFile(filePath) {
-  const target = normalizePath(filePath);
-  return syncStore.has(target) || localStorage.getItem(`${STORAGE_PREFIX}${target}`) != null;
+  return browserFsAdapter.getStoredFile(filePath) != null;
 }
 
 function ensureParentDirs(filePath) {
@@ -256,75 +186,31 @@ function isTextLikePath(filePath) {
 }
 
 function getStoredFile(filePath) {
-  const target = normalizePath(filePath);
-  return syncStore.get(target) ?? localStorage.getItem(`${STORAGE_PREFIX}${target}`);
+  return browserFsAdapter.getStoredFile(filePath);
 }
 
 function setStoredFile(filePath, value) {
-  const target = normalizePath(filePath);
-  ensureParentDirs(target);
-  if (isBinaryLike(value)) {
-    const bytes = toUint8Array(value);
-    syncStore.set(target, bytes);
-    localStorage.removeItem(`${STORAGE_PREFIX}${target}`);
-  } else {
-    const text = typeof value === 'string' ? value : String(value);
-    syncStore.set(target, text);
-    localStorage.setItem(`${STORAGE_PREFIX}${target}`, text);
-  }
+  return browserFsAdapter.setStoredFile(filePath, value);
 }
 
 function clearStoredFile(filePath) {
-  const target = normalizePath(filePath);
-  syncStore.delete(target);
-  localStorage.removeItem(`${STORAGE_PREFIX}${target}`);
-  revokeVaultObjectUrl(target);
+  return browserFsAdapter.clearStoredFile(filePath);
 }
 
 function revokeVaultObjectUrl(filePath) {
-  const target = normalizePath(filePath);
-  const current = vaultObjectUrls.get(target);
-  if (current) {
-    URL.revokeObjectURL(current.url);
-    vaultObjectUrls.delete(target);
-  }
+  return undefined;
 }
 
 function getVaultAssetUrlSync(filePath) {
-  const target = normalizePath(filePath);
-  const cached = vaultObjectUrls.get(target);
-  if (cached) return cached.url;
-  const value = getStoredFile(target);
-  if (value == null) return null;
-  const blob = typeof value === 'string'
-    ? new Blob([value], { type: mimeTypeForPath(target) })
-    : new Blob([toUint8Array(value)], { type: mimeTypeForPath(target) });
-  const url = URL.createObjectURL(blob);
-  vaultObjectUrls.set(target, {
-    url,
-    size: blob.size,
-    lastModified: 0,
-  });
-  return url;
+  return null;
 }
 
 function listStoredFiles() {
-  const keys = new Set(syncStore.keys());
-  for (const key of Object.keys(localStorage)) {
-    if (key.startsWith(STORAGE_PREFIX)) keys.add(key.slice(STORAGE_PREFIX.length));
-  }
-  return [...keys].sort();
+  return browserFsAdapter.listStoredFiles();
 }
 
 function resetVirtualFs() {
-  syncStore.clear();
-  for (const key of Object.keys(localStorage)) {
-    if (key.startsWith(STORAGE_PREFIX)) localStorage.removeItem(key);
-  }
-  virtualDirs.clear();
-  for (const dir of ['/', VIRTUAL_VAULT_ROOT, SANDBOX_VAULT_PATH, ...getVaultEntries().map((entry) => entry.path)]) {
-    virtualDirs.add(dir);
-  }
+  return browserFsAdapter.resetVirtualFs();
 }
 
 function getCurrentVault() {
@@ -332,36 +218,42 @@ function getCurrentVault() {
 }
 
 function setCurrentVault(vault) {
-  if (!vault) {
-    currentVault = null;
-    return;
-  }
-  currentVault = {
-    ...currentVault,
-    ...vault,
-  };
-  upsertVaultRecord({
-    id: currentVault.id,
-    path: currentVault.path,
-    name: currentVault.name,
-    ts: Date.now(),
-    open: true,
-  });
-  virtualDirs.add(currentVault.path);
+  vaultRegistryStore.setCurrentVault(vault);
+  currentVault = vaultRegistryStore.getCurrentVault();
 }
 
+const browserFsAdapter = createBrowserFsAdapter({
+  storagePrefix: STORAGE_PREFIX,
+  virtualVaultRoot: VIRTUAL_VAULT_ROOT,
+  sandboxVaultPath: SANDBOX_VAULT_PATH,
+  normalizePath,
+  ensureParentDirs,
+  normalizeEncoding,
+  isBinaryLike,
+  toUint8Array,
+  isTextLikePath,
+  missingFileFallback,
+  splitRelativePath,
+  getCurrentVault,
+  getVaultEntries,
+  getSelectedDirectoryHandle: () => selectedDirectoryHandle,
+  mimeTypeForPath,
+});
+const { virtualDirs } = browserFsAdapter;
+
 function isCurrentVaultPath(filePath) {
+  const current = getCurrentVault();
   const target = normalizePath(filePath);
-  if (!currentVault?.path) return false;
-  return target === currentVault.path || target.startsWith(`${currentVault.path}/`);
+  return !!current?.path && (target === current.path || target.startsWith(`${current.path}/`));
 }
 
 function getVaultRelativePath(filePath) {
   const target = normalizePath(filePath);
-  if (!currentVault?.path) return null;
-  if (target === currentVault.path) return '';
-  if (!target.startsWith(`${currentVault.path}/`)) return null;
-  return target.slice(currentVault.path.length + 1);
+  const current = getCurrentVault();
+  if (!current?.path) return null;
+  if (target === current.path) return '';
+  if (!target.startsWith(`${current.path}/`)) return null;
+  return target.slice(current.path.length + 1);
 }
 
 function isObsidianConfigJson(filePath) {
@@ -378,550 +270,31 @@ function splitRelativePath(relativePath) {
 }
 
 function clearVaultCache(vaultPath) {
-  const prefix = `${normalizePath(vaultPath)}/`;
-  for (const dir of [...virtualDirs]) {
-    if (dir === vaultPath || dir.startsWith(prefix)) virtualDirs.delete(dir);
-  }
-  for (const key of [...syncStore.keys()]) {
-    if (key.startsWith(prefix)) syncStore.delete(key);
-  }
+  return browserFsAdapter.clearVaultCache(vaultPath);
 }
 
 async function ensureVaultPathExists(vaultPath, create) {
-  const normalized = normalizePath(vaultPath);
-  if (create) {
-    virtualDirs.add(normalized);
-    if (selectedDirectoryHandle && normalized === currentVault.path) {
-      await mkdirRealVaultPath(normalized);
-    }
-    return true;
-  }
-
-  if (normalized === currentVault.path) return true;
-  return virtualDirs.has(normalized) || hasStoredFile(normalized);
+  return browserFsAdapter.ensureVaultPathExists(vaultPath, create);
 }
 
 async function ensureVaultBootstrapFiles(vaultPath) {
-  const obsidianDir = `${normalizePath(vaultPath)}/.obsidian`;
-  virtualDirs.add(obsidianDir);
-  if (!selectedDirectoryHandle || !isCurrentVaultPath(obsidianDir)) return;
-  try {
-    await mkdirRealVaultPath(obsidianDir);
-  } catch (error) {
-    console.error(error);
-  }
-}
-
-async function readHandleValue(fileHandle, filePath, options) {
-  const file = await fileHandle.getFile();
-  const encoding = normalizeEncoding(options);
-  if (encoding === 'utf8' || encoding === 'utf-8') return file.text();
-  if (file.type.startsWith('text/') || isTextLikePath(filePath)) return file.text();
-  return new Uint8Array(await file.arrayBuffer());
-}
-
-async function getDirectoryHandleForRelativePath(relativePath, options = {}) {
-  if (!selectedDirectoryHandle) throw new Error('No selected directory handle');
-  let handle = selectedDirectoryHandle;
-  for (const part of splitRelativePath(relativePath)) {
-    handle = await handle.getDirectoryHandle(part, { create: Boolean(options.create) });
-  }
-  return handle;
-}
-
-async function getFileHandleForRelativePath(relativePath, options = {}) {
-  const parts = splitRelativePath(relativePath);
-  const filename = parts.pop();
-  if (!filename) throw new Error('Invalid file path');
-  const parent = await getDirectoryHandleForRelativePath(parts.join('/'), { create: options.createParent });
-  return parent.getFileHandle(filename, { create: Boolean(options.create) });
-}
-
-async function mirrorDirectoryHandle(handle, basePath, version) {
-  if (version !== selectedDirectoryVersion) return;
-  virtualDirs.add(basePath);
-  for await (const [name, child] of handle.entries()) {
-    const childPath = `${basePath}/${name}`;
-    if (child.kind === 'directory') {
-      await mirrorDirectoryHandle(child, childPath, version);
-      continue;
-    }
-    syncStore.set(childPath, await readHandleValue(child, childPath));
-  }
+  return browserFsAdapter.ensureVaultBootstrapFiles(vaultPath);
 }
 
 async function refreshSelectedVaultCache() {
-  if (!selectedDirectoryHandle) return;
-  selectedDirectoryVersion += 1;
-  const version = selectedDirectoryVersion;
-  clearVaultCache(currentVault.path);
-  virtualDirs.add(currentVault.path);
-  await mirrorDirectoryHandle(selectedDirectoryHandle, currentVault.path, version);
-}
-
-async function writeRealVaultFile(filePath, value) {
-  const relativePath = getVaultRelativePath(filePath);
-  if (relativePath == null || !selectedDirectoryHandle) return;
-  const fileHandle = await getFileHandleForRelativePath(relativePath, { create: true, createParent: true });
-  const writable = await fileHandle.createWritable();
-  if (value instanceof Blob) await writable.write(value);
-  else if (isBinaryLike(value)) await writable.write(toUint8Array(value));
-  else await writable.write(typeof value === 'string' ? value : String(value));
-  await writable.close();
-  revokeVaultObjectUrl(filePath);
-}
-
-async function mkdirRealVaultPath(filePath) {
-  const relativePath = getVaultRelativePath(filePath);
-  if (relativePath == null || !selectedDirectoryHandle) return;
-  await getDirectoryHandleForRelativePath(relativePath, { create: true });
-}
-
-async function unlinkRealVaultPath(filePath) {
-  const relativePath = getVaultRelativePath(filePath);
-  if (relativePath == null || !selectedDirectoryHandle) return;
-  const parts = splitRelativePath(relativePath);
-  const leaf = parts.pop();
-  if (!leaf) return;
-  try {
-    const parent = await getDirectoryHandleForRelativePath(parts.join('/'));
-    await parent.removeEntry(leaf, { recursive: true });
-    revokeVaultObjectUrl(filePath);
-  } catch (error) {
-    if (error && error.name === 'NotFoundError') return;
-    throw error;
-  }
+  return browserFsAdapter.refreshSelectedVaultCache();
 }
 
 async function getVaultFile(filePath) {
-  const relativePath = getVaultRelativePath(filePath);
-  if (relativePath == null || !selectedDirectoryHandle) throw new Error('No selected vault file');
-  const fileHandle = await getFileHandleForRelativePath(relativePath);
-  return fileHandle.getFile();
-}
-
-async function getVaultAssetUrl(filePath) {
-  const target = normalizePath(filePath);
-  const file = await getVaultFile(target);
-  const cached = vaultObjectUrls.get(target);
-  if (cached && cached.size === file.size && cached.lastModified === file.lastModified) {
-    return cached.url;
-  }
-  revokeVaultObjectUrl(target);
-  const url = URL.createObjectURL(file);
-  vaultObjectUrls.set(target, {
-    url,
-    size: file.size,
-    lastModified: file.lastModified,
-  });
-  return url;
-}
-
-function extractVirtualVaultPath(value) {
-  const text = String(value || '');
-  if (!text || text.startsWith('blob:') || text.startsWith('data:')) return null;
-  const candidates = [text];
-  try {
-    const first = new URL(text, window.location.href);
-    candidates.push(first.pathname);
-    const nested = decodeURIComponent(first.pathname).replace(/^\//, '');
-    if (/^https?:/i.test(nested)) {
-      const second = new URL(nested);
-      candidates.push(second.pathname);
-    }
-  } catch {}
-
-  for (const candidate of candidates) {
-    const decoded = decodeURIComponent(candidate);
-    const idx = decoded.indexOf('/obsidian-web/');
-    if (idx === -1) continue;
-    const sliced = decoded.slice(idx).split('?')[0].split('#')[0];
-    return normalizePath(sliced);
-  }
-
-  return null;
+  return browserFsAdapter.getVaultFile(filePath);
 }
 
 function installVaultAssetUrlShims() {
-  const sweepDocument = () => {
-    for (const element of document.querySelectorAll('[src],[href],[poster]')) {
-      for (const attribute of observedAttributes) {
-        if (element.hasAttribute(attribute)) void rewriteElement(element, attribute);
-      }
-    }
-  };
-
-  const rewriteElement = async (element, attribute) => {
-    const rawValue = element.getAttribute(attribute);
-    const filePath = extractVirtualVaultPath(rawValue);
-    if (!filePath || !isCurrentVaultPath(filePath) || !selectedDirectoryHandle) return;
-    try {
-      const blobUrl = await getVaultAssetUrl(filePath);
-      if (element.getAttribute(attribute) !== blobUrl) {
-        element.setAttribute(attribute, blobUrl);
-      }
-    } catch (error) {
-      if (error && error.name === 'NotFoundError') return;
-      console.error(error);
-    }
-  };
-
-  const patchUrlProperty = (prototype, property) => {
-    const descriptor = Object.getOwnPropertyDescriptor(prototype, property);
-    if (!descriptor?.set || !descriptor?.get) return;
-    Object.defineProperty(prototype, property, {
-      configurable: true,
-      enumerable: descriptor.enumerable,
-      get() {
-        return descriptor.get.call(this);
-      },
-      set(value) {
-        const filePath = extractVirtualVaultPath(value);
-        if (!filePath || !isCurrentVaultPath(filePath) || !selectedDirectoryHandle) {
-          descriptor.set.call(this, value);
-          return;
-        }
-
-        const syncUrl = getVaultAssetUrlSync(filePath);
-        if (syncUrl) {
-          descriptor.set.call(this, syncUrl);
-          return;
-        }
-        void getVaultAssetUrl(filePath)
-          .then((blobUrl) => {
-            descriptor.set.call(this, blobUrl);
-          })
-          .catch((error) => {
-            if (error && error.name === 'NotFoundError') return;
-            console.error(error);
-          });
-      },
-    });
-  };
-
-  const observedAttributes = ['src', 'href', 'poster'];
-  const observer = new MutationObserver((mutations) => {
-    for (const mutation of mutations) {
-      if (mutation.type === 'attributes' && mutation.target instanceof Element) {
-        void rewriteElement(mutation.target, mutation.attributeName);
-      }
-      if (mutation.type === 'childList') {
-        for (const node of mutation.addedNodes) {
-          if (!(node instanceof Element)) continue;
-          for (const attribute of observedAttributes) {
-            if (node.hasAttribute(attribute)) void rewriteElement(node, attribute);
-          }
-          for (const descendant of node.querySelectorAll('[src],[href],[poster]')) {
-            for (const attribute of observedAttributes) {
-              if (descendant.hasAttribute(attribute)) void rewriteElement(descendant, attribute);
-            }
-          }
-        }
-      }
-    }
-  });
-
-  observer.observe(document.documentElement, {
-    subtree: true,
-    childList: true,
-    attributes: true,
-    attributeFilter: observedAttributes,
-  });
-
-  sweepDocument();
-  window.setInterval(sweepDocument, 1000);
-
-  const nativeFetch = window.fetch.bind(window);
-  window.fetch = async (input, init) => {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input?.url;
-    const filePath = extractVirtualVaultPath(url);
-    if (filePath && isCurrentVaultPath(filePath) && selectedDirectoryHandle) {
-      try {
-        const file = await getVaultFile(filePath);
-        return new Response(file.stream(), {
-          status: 200,
-          headers: {
-            'Content-Type': file.type || 'application/octet-stream',
-          },
-        });
-      } catch (error) {
-        if (error && error.name === 'NotFoundError') return new Response(null, { status: 404 });
-        throw error;
-      }
-    }
-    return nativeFetch(input, init);
-  };
-
-  const originalSetAttribute = Element.prototype.setAttribute;
-  Element.prototype.setAttribute = function patchedSetAttribute(name, value) {
-    return originalSetAttribute.call(this, name, value);
-  };
-
-  patchUrlProperty(HTMLImageElement.prototype, 'src');
-  patchUrlProperty(HTMLAudioElement.prototype, 'src');
-  patchUrlProperty(HTMLVideoElement.prototype, 'src');
-  patchUrlProperty(HTMLSourceElement.prototype, 'src');
-  patchUrlProperty(HTMLAnchorElement.prototype, 'href');
-  patchUrlProperty(HTMLLinkElement.prototype, 'href');
+  return browserFsAdapter.installVaultAssetUrlShims();
 }
 
 function createFsStub() {
-  const fsStub = {
-    constants: {
-      R_OK: 4,
-      W_OK: 2,
-    },
-    existsSync(filePath) {
-      const target = normalizePath(filePath);
-      return virtualDirs.has(target) || hasStoredFile(target);
-    },
-    readFileSync(filePath, options) {
-      const value = getStoredFile(filePath);
-      if (value != null) {
-        const encoding = normalizeEncoding(options);
-        if (typeof value === 'string') {
-          if (encoding === 'utf8' || encoding === 'utf-8') return value;
-          return Buffer.from(value, 'utf8');
-        }
-        const bytes = toUint8Array(value);
-        if (encoding === 'utf8' || encoding === 'utf-8') return new TextDecoder().decode(bytes);
-        return Buffer.from(bytes);
-      }
-      return missingFileFallback(filePath, options);
-    },
-    writeFileSync(filePath, value) {
-      setStoredFile(filePath, value);
-      if (isCurrentVaultPath(filePath) && selectedDirectoryHandle) {
-        void writeRealVaultFile(filePath, value).catch((error) => console.error(error));
-      }
-    },
-    unlinkSync(filePath) {
-      clearStoredFile(filePath);
-      if (isCurrentVaultPath(filePath) && selectedDirectoryHandle) {
-        void unlinkRealVaultPath(filePath).catch((error) => console.error(error));
-      }
-    },
-    readdirSync(filePath) {
-      const target = normalizePath(filePath);
-      const entries = new Set();
-
-      for (const dir of virtualDirs) {
-        if (dir !== target && path.dirname(dir) === target) entries.add(path.basename(dir));
-      }
-
-      for (const key of new Set([...syncStore.keys(), ...Object.keys(localStorage)])) {
-        const normalized = String(key).startsWith(STORAGE_PREFIX) ? key.slice(STORAGE_PREFIX.length) : key;
-        if (path.dirname(normalized) === target) entries.add(path.basename(normalized));
-      }
-
-      return [...entries];
-    },
-    lstatSync(filePath) {
-      return fsStub.statSync(filePath);
-    },
-    realpathSync(filePath) {
-      return normalizePath(filePath);
-    },
-    mkdirSync(filePath) {
-      virtualDirs.add(normalizePath(filePath));
-      if (isCurrentVaultPath(filePath) && selectedDirectoryHandle) {
-        void mkdirRealVaultPath(filePath).catch((error) => console.error(error));
-      }
-    },
-    rmSync() {},
-    renameSync(fromPath, toPath) {
-      const value = getStoredFile(fromPath);
-      if (value != null) {
-        setStoredFile(toPath, value);
-        fsStub.unlinkSync(fromPath);
-      }
-    },
-    copyFileSync(fromPath, toPath) {
-      const value = getStoredFile(fromPath);
-      if (value != null) setStoredFile(toPath, value);
-    },
-    statSync(filePath) {
-      const target = normalizePath(filePath);
-      if (virtualDirs.has(target)) {
-        return {
-          size: 0,
-          birthtimeMs: Date.now(),
-          mtimeMs: Date.now(),
-          isDirectory: () => true,
-          isFile: () => false,
-        };
-      }
-      if (!hasStoredFile(target)) {
-        const error = new Error(`ENOENT: no such file or directory, stat '${target}'`);
-        error.code = 'ENOENT';
-        throw error;
-      }
-      const value = getStoredFile(target) ?? '';
-      return {
-        size: typeof value === 'string' ? value.length : toUint8Array(value).byteLength,
-        birthtimeMs: Date.now(),
-        mtimeMs: Date.now(),
-        isDirectory: () => false,
-        isFile: () => true,
-      };
-    },
-    accessSync() {},
-    watch() {
-      const handlers = new Map();
-      const watcher = {
-        on(event, callback) {
-          const list = handlers.get(event) ?? [];
-          list.push(callback);
-          handlers.set(event, list);
-          return watcher;
-        },
-        once(event, callback) {
-          const wrapped = (...args) => {
-            watcher.removeListener(event, wrapped);
-            callback(...args);
-          };
-          return watcher.on(event, wrapped);
-        },
-        removeListener(event, callback) {
-          const list = handlers.get(event) ?? [];
-          handlers.set(
-            event,
-            list.filter((entry) => entry !== callback),
-          );
-          return watcher;
-        },
-        removeAllListeners(event) {
-          if (typeof event === 'string') handlers.delete(event);
-          else handlers.clear();
-          return watcher;
-        },
-        emit(event, ...args) {
-          const list = handlers.get(event) ?? [];
-          for (const handler of list) handler(...args);
-          return watcher;
-        },
-        close() {
-          handlers.clear();
-          return watcher;
-        },
-      };
-      return watcher;
-    },
-    promises: {
-      async readFile(filePath, options) {
-        if (isCurrentVaultPath(filePath) && selectedDirectoryHandle) {
-          const relativePath = getVaultRelativePath(filePath);
-          try {
-            const fileHandle = await getFileHandleForRelativePath(relativePath);
-            const value = await readHandleValue(fileHandle, filePath, options);
-            syncStore.set(normalizePath(filePath), value);
-          } catch (error) {
-            if (error && error.name === 'NotFoundError') return missingFileFallback(filePath, options);
-            throw error;
-          }
-        }
-        return fsStub.readFileSync(filePath, options);
-      },
-      async writeFile(filePath, value) {
-        fsStub.writeFileSync(filePath, value);
-        if (isCurrentVaultPath(filePath) && selectedDirectoryHandle) {
-          await writeRealVaultFile(filePath, value);
-        }
-      },
-      async readdir(filePath) {
-        if (isCurrentVaultPath(filePath) && selectedDirectoryHandle) {
-          const dirHandle = await getDirectoryHandleForRelativePath(getVaultRelativePath(filePath));
-          const names = [];
-          for await (const [name] of dirHandle.entries()) names.push(name);
-          return names;
-        }
-        return fsStub.readdirSync(filePath);
-      },
-      async mkdir(filePath) {
-        fsStub.mkdirSync(filePath);
-        if (isCurrentVaultPath(filePath) && selectedDirectoryHandle) {
-          await mkdirRealVaultPath(filePath);
-        }
-      },
-      async access(filePath) {
-        if (isCurrentVaultPath(filePath) && selectedDirectoryHandle) {
-          const relativePath = getVaultRelativePath(filePath);
-          if (relativePath === '') return;
-          try {
-            await getFileHandleForRelativePath(relativePath);
-            return;
-          } catch {}
-          try {
-            await getDirectoryHandleForRelativePath(relativePath);
-            return;
-          } catch {}
-        }
-        if (!fsStub.existsSync(filePath)) {
-          const error = new Error(`ENOENT: no such file or directory, access '${filePath}'`);
-          error.code = 'ENOENT';
-          throw error;
-        }
-      },
-      async stat(filePath) {
-        if (isCurrentVaultPath(filePath) && selectedDirectoryHandle) {
-          const relativePath = getVaultRelativePath(filePath);
-          if (relativePath === '') return fsStub.statSync(filePath);
-          try {
-            const dirHandle = await getDirectoryHandleForRelativePath(relativePath);
-            if (dirHandle) return fsStub.statSync(filePath);
-          } catch {}
-          try {
-            const fileHandle = await getFileHandleForRelativePath(relativePath);
-            const value = await readHandleValue(fileHandle, filePath);
-            syncStore.set(normalizePath(filePath), value);
-          } catch (error) {
-            if (error && error.name === 'NotFoundError' && isObsidianConfigJson(filePath)) {
-              syncStore.set(normalizePath(filePath), '{}');
-              return fsStub.statSync(filePath);
-            }
-          }
-        }
-        return fsStub.statSync(filePath);
-      },
-      async lstat(filePath) {
-        return fsStub.lstatSync(filePath);
-      },
-      async realpath(filePath) {
-        return fsStub.realpathSync(filePath);
-      },
-      async utimes(filePath) {
-        if (!fsStub.existsSync(filePath)) {
-          const error = new Error(`ENOENT: no such file or directory, utime '${filePath}'`);
-          error.code = 'ENOENT';
-          throw error;
-        }
-      },
-      async unlink(filePath) {
-        fsStub.unlinkSync(filePath);
-        if (isCurrentVaultPath(filePath) && selectedDirectoryHandle) {
-          await unlinkRealVaultPath(filePath);
-        }
-      },
-      async rename(fromPath, toPath) {
-        fsStub.renameSync(fromPath, toPath);
-        if (isCurrentVaultPath(fromPath) && isCurrentVaultPath(toPath) && selectedDirectoryHandle) {
-          const value = getStoredFile(toPath);
-          await writeRealVaultFile(toPath, value ?? '');
-          await unlinkRealVaultPath(fromPath);
-        }
-      },
-      async copyFile(fromPath, toPath) {
-        fsStub.copyFileSync(fromPath, toPath);
-        if (isCurrentVaultPath(toPath) && selectedDirectoryHandle) {
-          await writeRealVaultFile(toPath, getStoredFile(toPath) ?? '');
-        }
-      },
-    },
-  };
-
-  fsStub.realpathSync.native = fsStub.realpathSync;
-
-  return fsStub;
+  return browserFsAdapter.createFsStub();
 }
 
 function buildVaultList() {
@@ -1239,7 +612,7 @@ function installShims() {
       const result = electronStub.remote.dialog.showOpenDialogSync(options);
       return Array.isArray(result) && result.length > 0 ? result[0] : null;
     },
-    syncStore,
+    syncStore: browserFsAdapter.syncStore,
   };
 }
 

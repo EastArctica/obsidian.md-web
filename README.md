@@ -16,6 +16,7 @@ What it does:
 - Includes a basic `@electron/remote` shim mapped through `window.require('@electron/remote')`.
 - Applies a minimal in-memory patch to `starter.js` so the folder dialog path is routed through the web shim instead of mutating files on disk.
 - Starts from a slim `src/bootstrap.js` entrypoint that now delegates to `src/targets/browser/index.js` or `src/targets/selfhosted/index.js`, with shared helpers under `src/core/`.
+- The browser target is now split further into `vaultRegistry`, `handleStore`, `fsAdapter`, and `vaultAdapter` modules under `src/targets/browser/`.
 
 What it does not do yet:
 - Replace the real desktop main process.
