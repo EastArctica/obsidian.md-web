@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractFile, listPackage, statFile } from '@electron/asar';
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import { createSelfhostedApiPlugin } from './server/selfhostedApi.js';
 
 const projectDir = path.dirname(fileURLToPath(import.meta.url));
@@ -137,17 +137,28 @@ function obsidianAsarPlugin() {
   };
 }
 
-export default defineConfig({
-  base: './',
-  publicDir: false,
-  plugins: [obsidianAsarPlugin(), createSelfhostedApiPlugin({ projectDir })],
-  server: {
-    fs: {
-      allow: [projectDir],
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, projectDir, '');
+  const allowedHosts = env.VITE_HOST
+    ? env.VITE_HOST.split(',').map((host) => host.trim()).filter(Boolean)
+    : undefined;
+
+  return {
+    base: './',
+    publicDir: false,
+    plugins: [obsidianAsarPlugin(), createSelfhostedApiPlugin({ projectDir })],
+    server: {
+      allowedHosts,
+      fs: {
+        allow: [projectDir],
+      },
     },
-  },
-  build: {
-    outDir: 'dist',
-    emptyOutDir: true,
-  },
+    preview: {
+      allowedHosts,
+    },
+    build: {
+      outDir: 'dist',
+      emptyOutDir: true,
+    },
+  };
 });

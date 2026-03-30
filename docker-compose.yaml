@@ -9,6 +9,8 @@ services:
       - "4173:4173"
     environment:
       OBSIDIAN_VAULT_ROOT: /data/vaults
+      # "browser" (Users select vaults from their local disk) or "selfhosted" (Users select vaults from the server's filesystem)
       VITE_OBSIDIAN_TARGET: selfhosted
+      # VITE_HOST: obsidian.example.com
     volumes:
       - ./vaults:/data/vaults
