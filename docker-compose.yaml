@@ -1,6 +1,6 @@
 services:
   obsidian-md-web:
-    name: obsidian-md-web
+    container_name: obsidian-md-web
     restart: unless-stopped
     build:
       context: .
