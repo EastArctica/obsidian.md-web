@@ -5,12 +5,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    env_file:
+      - .env
     ports:
-      - "4173:4173"
+      - "${VITE_PORT:-4173}:4173"
     environment:
       OBSIDIAN_VAULT_ROOT: /data/vaults
       # "browser" (Users select vaults from their local disk) or "selfhosted" (Users select vaults from the server's filesystem)
-      VITE_OBSIDIAN_TARGET: selfhosted
-      # VITE_HOST: obsidian.example.com
+      VITE_OBSIDIAN_TARGET: ${VITE_OBSIDIAN_TARGET:-selfhosted}
+      # VITE_HOST: ${VITE_HOST:-}
     volumes:
       - ./vaults:/data/vaults
