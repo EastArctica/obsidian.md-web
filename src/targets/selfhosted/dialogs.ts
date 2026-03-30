@@ -75,6 +75,10 @@ export function createSelfhostedDialogs(options: SelfhostedDialogsOptions) {
     },
     async openFolderAsVault(ipcRenderer: any, messages: any, NoticeCtor: any) {
       try {
+        if (listVaults().length === 0) {
+          showNotice(NoticeCtor, 'No vaults are available yet. Create a vault first.');
+          return false;
+        }
         const chosenPath = chooseExistingVaultPath();
         if (!chosenPath) return false;
         const vault = { path: chosenPath };
