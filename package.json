@@ -5,7 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:browser": "vite",
+    "dev:selfhosted": "VITE_OBSIDIAN_TARGET=selfhosted vite",
     "build": "vite build",
+    "build:browser": "vite build",
+    "build:selfhosted": "VITE_OBSIDIAN_TARGET=selfhosted vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },

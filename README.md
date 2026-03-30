@@ -22,7 +22,7 @@ What it does not do yet:
 - Replace the real desktop main process.
 - Provide native filesystem, IPC, or Electron window behavior.
 - Make the full app production-ready in a browser.
-- The planned `selfhosted` target now has a scaffolded target entry and vault adapter shell, but the server-backed implementation is still not wired up.
+- Selfhosted mode still needs more compatibility work for full Obsidian coverage, but it now uses a real API constrained under `OBSIDIAN_VAULT_ROOT` (default: `./vaults`).
 
 Known follow-up:
 - Recent vault metadata is now persisted, and directory handles are restored from IndexedDB when the browser allows it; sync fallback vault paths chosen through `prompt(...)` still do not have a real handle behind them.
@@ -37,7 +37,11 @@ Built-in IPC stubs:
 Commands:
 - `npm install`
 - `npm run dev`
+- `npm run dev:browser`
+- `npm run dev:selfhosted`
 - `npm run build`
+- `npm run build:browser`
+- `npm run build:selfhosted`
 - `npm run typecheck`
 
 The shim state is exposed at `window.__OBSIDIAN_WEB_SHIM__` for debugging.

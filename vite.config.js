@@ -2,6 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractFile, listPackage, statFile } from '@electron/asar';
 import { defineConfig } from 'vite';
+import { createSelfhostedApiPlugin } from './server/selfhostedApi.js';
 
 const projectDir = path.dirname(fileURLToPath(import.meta.url));
 const obsidianAsarPath = path.resolve(projectDir, 'asar/obsidian.asar');
@@ -139,7 +140,7 @@ function obsidianAsarPlugin() {
 export default defineConfig({
   base: './',
   publicDir: false,
-  plugins: [obsidianAsarPlugin()],
+  plugins: [obsidianAsarPlugin(), createSelfhostedApiPlugin({ projectDir })],
   server: {
     fs: {
       allow: [projectDir],

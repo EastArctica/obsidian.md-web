@@ -32,6 +32,7 @@ export function createBrowserVaultAdapter(deps) {
     clearVaultCache,
     ensureVaultBootstrapFiles,
     getCurrentVaultState,
+    requestVaultSwitch,
   } = deps;
 
   return defineVaultAdapter({
@@ -99,6 +100,8 @@ export function createBrowserVaultAdapter(deps) {
       }
       if (document.body.classList.contains('starter')) {
         void launchMainApp(normalized).catch((error) => console.error(error));
+      } else {
+        requestVaultSwitch(normalized);
       }
       return true;
     },

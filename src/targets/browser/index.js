@@ -18,6 +18,7 @@ const statusUi = createStatusUi();
 const { setStatus: setStatusCore, showVaultPickerGlow: showVaultPickerGlowCore, hideVaultPickerGlow: hideVaultPickerGlowCore, clearStatus } = statusUi;
 const scriptLoader = createScriptLoader();
 const { appendScript: appendScriptCore, loadScriptQueue: loadScriptQueueCore } = scriptLoader;
+const PENDING_VAULT_KEY = 'obsidian-web:pending-vault';
 
 const starterScriptQueue = [
   '/lib/i18next.min.js',
@@ -167,8 +168,54 @@ function mimeTypeForPath(filePath) {
 }
 
 function installDomCompatShims() {
+  const DRAG_PIXEL_SRC = 'data:image/gif;base64,R0lGODlhAQABAIAAAAUEBAAAACwAAAAAAQABAAACAkQBADs=';
   if (typeof Event !== 'undefined' && !Event.prototype.detach) {
     Event.prototype.detach = function detach() {};
+  }
+  if (typeof Event !== 'undefined' && !('doc' in Event.prototype)) {
+    Object.defineProperty(Event.prototype, 'doc', {
+      configurable: true,
+      get() {
+        return this.view?.document || document;
+      },
+    });
+  }
+  if (typeof Event !== 'undefined' && !('win' in Event.prototype)) {
+    Object.defineProperty(Event.prototype, 'win', {
+      configurable: true,
+      get() {
+        return this.view || window;
+      },
+    });
+  }
+  if (typeof Event !== 'undefined' && !('targetNode' in Event.prototype)) {
+    Object.defineProperty(Event.prototype, 'targetNode', {
+      configurable: true,
+      get() {
+        return this.target;
+      },
+    });
+  }
+  if (typeof Element !== 'undefined' && !Element.prototype.__obsidianPatchedAppend) {
+    const originalAppend = Element.prototype.append;
+    Object.defineProperty(Element.prototype, '__obsidianPatchedAppend', { value: true });
+    Element.prototype.append = function patchedAppend(...nodes) {
+      for (const node of nodes) {
+        if (node instanceof HTMLImageElement && node.src === DRAG_PIXEL_SRC) {
+          node.width = 1;
+          node.height = 1;
+          node.style.position = 'fixed';
+          node.style.left = '-9999px';
+          node.style.top = '-9999px';
+          node.style.width = '1px';
+          node.style.height = '1px';
+          node.style.opacity = '0';
+          node.style.pointerEvents = 'none';
+          node.style.zIndex = '-1';
+        }
+      }
+      return originalAppend.apply(this, nodes);
+    };
   }
   installVaultAssetUrlShims();
 }
@@ -337,6 +384,17 @@ function buildVaultList() {
   );
 }
 
+function requestVaultSwitch(vaultPath) {
+  if (!vaultPath) return;
+  sessionStorage.setItem(PENDING_VAULT_KEY, vaultPath);
+  window.location.reload();
+}
+
+function goToStarterPage() {
+  sessionStorage.removeItem(PENDING_VAULT_KEY);
+  window.location.reload();
+}
+
 async function pickVaultDirectory() {
   return dialogs.pickVaultDirectory();
 }
@@ -413,6 +471,7 @@ function installShims() {
     vaultAdapter: browserVaultAdapter,
     obsidianVersion: OBSIDIAN_VERSION,
     adblockLists: DEFAULT_ADBLOCK_LISTS,
+    onStarter: goToStarterPage,
   });
 
   if (currentVault?.path) virtualDirs.add(currentVault.path);
@@ -557,6 +616,7 @@ const browserVaultAdapter = createBrowserVaultAdapter({
   ensureVaultBootstrapFiles,
   restoreVaultHandles,
   getCurrentVaultState: () => currentVault,
+  requestVaultSwitch,
 });
 
 export async function bootBrowserApp() {
@@ -572,6 +632,12 @@ export async function bootBrowserApp() {
 
   await browserVaultAdapter.init();
   installShims();
+  const pendingVaultPath = sessionStorage.getItem(PENDING_VAULT_KEY);
+  if (pendingVaultPath) {
+    sessionStorage.removeItem(PENDING_VAULT_KEY);
+    const result = browserVaultAdapter.openVault(pendingVaultPath, false);
+    if (result === true) return;
+  }
   setStatus('Loading extracted Obsidian starter screen...');
 
   await loadScriptQueue(starterScriptQueue, 'Loading');

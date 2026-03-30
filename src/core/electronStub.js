@@ -2,6 +2,8 @@ import { createIpcRendererShim } from './ipc/createIpcRendererShim.js';
 
 export function createElectronStub({ openDirectoryDialog, openDirectoryDialogSync }) {
   const ipcRenderer = createIpcRendererShim();
+  let zoomFactor = 1;
+  let zoomLevel = 0;
   const nativeThemeStub = {
     shouldUseDarkColors: true,
     on() { return nativeThemeStub; },
@@ -11,8 +13,16 @@ export function createElectronStub({ openDirectoryDialog, openDirectoryDialogSyn
   };
   const webContentsStub = {
     executeJavaScript() { return Promise.resolve(null); },
-    getZoomFactor() { return 1; },
-    setZoomFactor() {},
+    getZoomFactor() { return zoomFactor; },
+    setZoomFactor(value = 1) {
+      zoomFactor = Number(value) || 1;
+      zoomLevel = Math.log2(zoomFactor);
+    },
+    getZoomLevel() { return zoomLevel; },
+    setZoomLevel(value = 0) {
+      zoomLevel = Number(value) || 0;
+      zoomFactor = 2 ** zoomLevel;
+    },
     send(...args) { return ipcRenderer.send(...args); },
     on() {},
     once() {},
@@ -69,8 +79,8 @@ export function createElectronStub({ openDirectoryDialog, openDirectoryDialogSyn
       readText() { return ''; },
     },
     webFrame: {
-      setZoomLevel() {},
-      getZoomLevel() { return 0; },
+      setZoomLevel(value) { webContentsStub.setZoomLevel(value); },
+      getZoomLevel() { return webContentsStub.getZoomLevel(); },
     },
     nativeTheme: nativeThemeStub,
   };

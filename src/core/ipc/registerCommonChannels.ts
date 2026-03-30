@@ -10,10 +10,11 @@ type RegisterCommonChannelsOptions = {
   vaultAdapter: { getDefaultVaultPath: () => string; getSandboxVaultPath: () => string };
   obsidianVersion: string;
   adblockLists: string[];
+  onStarter?: (...args: any[]) => void;
 };
 
 export function registerCommonChannels(options: RegisterCommonChannelsOptions) {
-  const { registerChannel, dispatchHostEvent, vaultAdapter, obsidianVersion, adblockLists } = options;
+  const { registerChannel, dispatchHostEvent, vaultAdapter, obsidianVersion, adblockLists, onStarter } = options;
 
   registerChannel('version', () => obsidianVersion, { emitOnSend: true, description: 'Returns the app package version.', returns: 'string' });
   registerChannel('is-dev', () => undefined, { emitOnSend: true, description: 'Reports whether the desktop host is a dev build; intentionally returns undefined for now.', returns: 'undefined' });
@@ -57,6 +58,7 @@ export function registerCommonChannels(options: RegisterCommonChannelsOptions) {
   }, { description: 'Opens the built-in sandbox vault flow.', returns: 'undefined' });
   registerChannel('starter', (...args) => {
     dispatchHostEvent('obsidian-web:starter', { args });
+    onStarter?.(...args);
     return undefined;
   }, { description: 'Opens the starter/create-or-open-vault UI.', returns: 'undefined' });
   registerChannel('help', (...args) => {

@@ -145,3 +145,5 @@ vite.config.ts.timestamp-*
 
 # Extracted Obsidian.md files for development purposes
 asar/extracted/
+
+vaults/
