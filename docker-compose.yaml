@@ -1,0 +1,14 @@
+services:
+  obsidian-md-web:
+    name: obsidian-md-web
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "4173:4173"
+    environment:
+      OBSIDIAN_VAULT_ROOT: /data/vaults
+      VITE_OBSIDIAN_TARGET: selfhosted
+    volumes:
+      - ./vaults:/data/vaults

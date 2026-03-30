@@ -11,6 +11,7 @@
     "build:browser": "vite build",
     "build:selfhosted": "VITE_OBSIDIAN_TARGET=selfhosted vite build",
     "preview": "vite preview",
+    "preview:selfhosted": "VITE_OBSIDIAN_TARGET=selfhosted vite preview --host 0.0.0.0 --port 4173",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

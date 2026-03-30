@@ -42,7 +42,13 @@ Commands:
 - `npm run build`
 - `npm run build:browser`
 - `npm run build:selfhosted`
+- `npm run preview:selfhosted`
 - `npm run typecheck`
+
+Docker:
+- Build and run the selfhosted target with the included `Dockerfile`.
+- Mount your vault root into `/data/vaults` inside the container.
+- See `docker-compose.example.yaml` for an example setup.
 
 The shim state is exposed at `window.__OBSIDIAN_WEB_SHIM__` for debugging.
 - `window.__OBSIDIAN_WEB_SHIM__.listVirtualFs()` shows persisted virtual files.
